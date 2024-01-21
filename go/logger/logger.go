@@ -31,8 +31,8 @@ var (
 
 // Application logger
 type AppLogger struct {
-	level  string
-	logger *log.Logger
+	Level  string
+	Logger *log.Logger
 }
 
 // For mapping config logger to email_service logger levels
@@ -46,9 +46,9 @@ var loggerLevelMap = map[string]log.Level{
 	"trace": log.TraceLevel,
 }
 
-func (l *AppLogger) getLevel() log.Level {
+func (l *AppLogger) GetLevel() log.Level {
 
-	level, exist := loggerLevelMap[l.level]
+	level, exist := loggerLevelMap[l.Level]
 	if !exist {
 		return log.DebugLevel
 	}
@@ -57,57 +57,57 @@ func (l *AppLogger) getLevel() log.Level {
 }
 
 func (l *AppLogger) Debug(args ...interface{}) {
-	l.logger.Debug(args...)
+	l.Logger.Debug(args...)
 }
 
 func (l *AppLogger) Debugf(format string, args ...interface{}) {
-	l.logger.Debugf(format, args...)
+	l.Logger.Debugf(format, args...)
 }
 
 func (l *AppLogger) Info(args ...interface{}) {
-	l.logger.Info(args...)
+	l.Logger.Info(args...)
 }
 
 func (l *AppLogger) Infof(format string, args ...interface{}) {
-	l.logger.Infof(format, args...)
+	l.Logger.Infof(format, args...)
 }
 
 func (l *AppLogger) Trace(args ...interface{}) {
-	l.logger.Trace(args...)
+	l.Logger.Trace(args...)
 }
 
 func (l *AppLogger) Tracef(format string, args ...interface{}) {
-	l.logger.Tracef(format, args...)
+	l.Logger.Tracef(format, args...)
 }
 
 func (l *AppLogger) Error(args ...interface{}) {
-	l.logger.Error(args...)
+	l.Logger.Error(args...)
 }
 
 func (l *AppLogger) Errorf(format string, args ...interface{}) {
-	l.logger.Errorf(format, args...)
+	l.Logger.Errorf(format, args...)
 }
 
 func (l *AppLogger) Warn(args ...interface{}) {
-	l.logger.Warn(args...)
+	l.Logger.Warn(args...)
 }
 
 func (l *AppLogger) Warnf(format string, args ...interface{}) {
-	l.logger.Warnf(format, args...)
+	l.Logger.Warnf(format, args...)
 }
 
 func (l *AppLogger) Panic(args ...interface{}) {
-	l.logger.Panic(args...)
+	l.Logger.Panic(args...)
 }
 
 func (l *AppLogger) Panicf(format string, args ...interface{}) {
-	l.logger.Panicf(format, args...)
+	l.Logger.Panicf(format, args...)
 }
 
 func (l *AppLogger) Fatal(args ...interface{}) {
-	l.logger.Fatal(args...)
+	l.Logger.Fatal(args...)
 }
 
 func (l *AppLogger) Fatalf(format string, args ...interface{}) {
-	l.logger.Fatalf(format, args...)
+	l.Logger.Fatalf(format, args...)
 }
