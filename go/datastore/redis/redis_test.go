@@ -12,12 +12,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Arif9878/common/go/testkit"
+
 	"github.com/alicebob/miniredis/v2"
 	goredis "github.com/redis/go-redis/v9"
-	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
-	"go.opentelemetry.io/otel/sdk/metric/metricdata"
-	sdktrace "go.opentelemetry.io/otel/sdk/trace"
-	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 
 	"github.com/Arif9878/common/go/config"
 	"github.com/Arif9878/common/go/datastore/redis"
@@ -181,16 +179,11 @@ func TestCredentialRotation(t *testing.T) {
 		t.Fatalf("command after rotation: %v", err)
 	}
 
-	deadline := time.Now().Add(2 * time.Second)
-	for time.Now().Before(deadline) {
+	testkit.Eventually(t, 2*time.Second, "the replaced credential revoked", func() bool {
 		u.mu.Lock()
-		n := len(u.revoked)
-		u.mu.Unlock()
-		if n == 1 {
-			break
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
+		defer u.mu.Unlock()
+		return len(u.revoked) == 1
+	})
 	u.mu.Lock()
 	if len(u.revoked) != 1 || u.revoked[0] != "user1" || u.at[0].Sub(rotatedAt) < lifetime {
 		t.Errorf("revoked %v at %v after rotation; want user1 after at least %v", u.revoked, u.at, lifetime)
@@ -235,11 +228,10 @@ func TestRotationRejectsBadCredentials(t *testing.T) {
 
 func TestTelemetryOmitsArguments(t *testing.T) {
 	m := miniredis.RunT(t)
-	spans := tracetest.NewSpanRecorder()
-	tp := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(spans))
-	reader := sdkmetric.NewManualReader()
+	tp, spans := testkit.NewTracer(t)
+	mp, metrics := testkit.NewMetrics(t)
 	c := newClient(t, redis.Config{Addrs: []string{m.Addr()}},
-		redis.WithTracerProvider(tp), redis.WithMeterProvider(sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))))
+		redis.WithTracerProvider(tp), redis.WithMeterProvider(mp))
 
 	ctx, parent := tp.Tracer("test").Start(context.Background(), "request")
 	_ = c.Set(ctx, "session:user-42", "secret-session-value", 0).Err()
@@ -261,11 +253,7 @@ func TestTelemetryOmitsArguments(t *testing.T) {
 		t.Error("no command span recorded")
 	}
 
-	var rm metricdata.ResourceMetrics
-	if err := reader.Collect(context.Background(), &rm); err != nil {
-		t.Fatal(err)
-	}
-	if len(rm.ScopeMetrics) == 0 {
+	if len(metrics.Collect().ScopeMetrics) == 0 {
 		t.Error("no redis metrics recorded")
 	}
 }

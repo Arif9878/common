@@ -11,8 +11,9 @@ import (
 	"testing/synctest"
 	"time"
 
-	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
-	"go.opentelemetry.io/otel/sdk/metric/metricdata"
+	"go.opentelemetry.io/otel/attribute"
+
+	"github.com/Arif9878/common/go/testkit"
 
 	"github.com/Arif9878/common/go/errors"
 	"github.com/Arif9878/common/go/resilience/circuitbreaker"
@@ -293,38 +294,19 @@ func TestRetryAroundBreaker(t *testing.T) {
 }
 
 func TestMetrics(t *testing.T) {
-	reader := sdkmetric.NewManualReader()
-	mp := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))
+	mp, m := testkit.NewMetrics(t)
 	b := circuitbreaker.New("dep", quiet, circuitbreaker.WithMeterProvider(mp), circuitbreaker.WithConsecutiveFailures(1))
 	call(t, b, succeed, 1)
 	call(t, b, func(context.Context) error { return errors.NotFound.New("x") }, 1)
 	call(t, b, fail, 1)
 	call(t, b, succeed, 1) // rejected
 
-	var rm metricdata.ResourceMetrics
-	if err := reader.Collect(context.Background(), &rm); err != nil {
-		t.Fatal(err)
-	}
-	outcomes := map[string]int64{}
-	var state int64 = -1
-	for _, m := range rm.ScopeMetrics[0].Metrics {
-		switch data := m.Data.(type) {
-		case metricdata.Sum[int64]:
-			for _, dp := range data.DataPoints {
-				o, _ := dp.Attributes.Value("outcome")
-				outcomes[o.AsString()] = dp.Value
-			}
-		case metricdata.Gauge[int64]:
-			state = data.DataPoints[0].Value
-		}
-	}
 	for _, o := range []string{"success", "client_error", "failure", "rejected"} {
-		if outcomes[o] != 1 {
-			t.Errorf("outcomes = %v", outcomes)
-			break
+		if got := m.Sum("circuitbreaker.requests", attribute.String("breaker", "dep"), attribute.String("outcome", o)); got != 1 {
+			t.Errorf("circuitbreaker.requests{outcome=%s} = %v, want 1", o, got)
 		}
 	}
-	if state != int64(circuitbreaker.Open) {
-		t.Errorf("state gauge = %d, want %d", state, circuitbreaker.Open)
+	if got := m.Gauge("circuitbreaker.state", attribute.String("breaker", "dep")); got != float64(circuitbreaker.Open) {
+		t.Errorf("state gauge = %v, want %d", got, circuitbreaker.Open)
 	}
 }

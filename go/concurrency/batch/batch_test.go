@@ -1,7 +1,6 @@
 package batch_test
 
 import (
-	"bytes"
 	"context"
 	stderrors "errors"
 	"io"
@@ -14,9 +13,9 @@ import (
 	"testing/synctest"
 	"time"
 
+	"github.com/Arif9878/common/go/testkit"
+
 	"go.opentelemetry.io/otel/attribute"
-	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
-	"go.opentelemetry.io/otel/sdk/metric/metricdata"
 
 	"github.com/Arif9878/common/go/concurrency/batch"
 	"github.com/Arif9878/common/go/errors"
@@ -223,14 +222,14 @@ func TestPartialAndTotalFailures(t *testing.T) {
 }
 
 func TestDefaultFailureHookLogsCountOnly(t *testing.T) {
-	var buf bytes.Buffer
+	logger, logs := testkit.NewLogger(t)
 	p := batch.New("audit", func(context.Context, []string) error { return stderrors.New("down") },
-		batch.WithLogger(slog.New(slog.NewJSONHandler(&buf, nil))))
+		batch.WithLogger(logger))
 	for _, s := range []string{"secret-a", "secret-b", "secret-c"} {
 		_ = p.Add(context.Background(), s)
 	}
 	_ = p.Close(context.Background())
-	out := buf.String()
+	out := logs.String()
 	if !strings.Contains(out, `"items":3`) || strings.Contains(out, "secret") {
 		t.Fatalf("log = %s", out)
 	}
@@ -320,40 +319,26 @@ func TestConcurrentProducers(t *testing.T) {
 
 func TestMetrics(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
-		reader := sdkmetric.NewManualReader()
-		mp := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))
+		mp, m := testkit.NewMetrics(t)
 		p := batch.New("events", func(context.Context, []int) error { return nil },
 			quiet, batch.WithSize(2), batch.WithMeterProvider(mp))
 		addAll(t, p, 1, 2, 3)
 		time.Sleep(2 * time.Second)
 
-		var rm metricdata.ResourceMetrics
-		if err := reader.Collect(context.Background(), &rm); err != nil {
-			t.Fatal(err)
+		proc := attribute.String("processor", "events")
+		checks := []struct {
+			name      string
+			got, want float64
+		}{
+			{"items success", m.Sum("batch.items", proc, attribute.String("outcome", "success")), 3},
+			{"flushes by size", m.Sum("batch.flushes", proc, attribute.String("reason", "size")), 1},
+			{"flushes by interval", m.Sum("batch.flushes", proc, attribute.String("reason", "interval")), 1},
+			{"batch count", float64(m.HistogramCount("batch.size", proc)), 2},
+			{"items in batches", m.HistogramSum("batch.size", proc), 3},
 		}
-		got := map[string]int64{}
-		for _, m := range rm.ScopeMetrics[0].Metrics {
-			switch d := m.Data.(type) {
-			case metricdata.Sum[int64]:
-				for _, dp := range d.DataPoints {
-					for _, key := range []string{"outcome", "reason"} {
-						if v, ok := dp.Attributes.Value(attribute.Key(key)); ok {
-							got[m.Name+"."+v.AsString()] = dp.Value
-						}
-					}
-				}
-			case metricdata.Histogram[int64]:
-				got[m.Name+".count"] = int64(d.DataPoints[0].Count) //nolint:gosec // test counts are tiny
-				got[m.Name+".sum"] = d.DataPoints[0].Sum
-			}
-		}
-		want := map[string]int64{
-			"batch.items.success": 3, "batch.flushes.size": 1, "batch.flushes.interval": 1,
-			"batch.size.count": 2, "batch.size.sum": 3,
-		}
-		for k, v := range want {
-			if got[k] != v {
-				t.Errorf("%s = %d, want %d (all: %v)", k, got[k], v, got)
+		for _, c := range checks {
+			if c.got != c.want {
+				t.Errorf("%s = %v, want %v", c.name, c.got, c.want)
 			}
 		}
 		closeP(t, p)

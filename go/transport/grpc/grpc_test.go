@@ -1,9 +1,7 @@
 package grpc_test
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
 	stderrors "errors"
 	"io"
 	"log/slog"
@@ -13,11 +11,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Arif9878/common/go/testkit"
+
 	"go.opentelemetry.io/otel/propagation"
-	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
-	"go.opentelemetry.io/otel/sdk/metric/metricdata"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
-	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	healthpb "google.golang.org/grpc/health/grpc_health_v1"
@@ -29,7 +26,6 @@ import (
 	"github.com/Arif9878/common/go/errors"
 	"github.com/Arif9878/common/go/health"
 	"github.com/Arif9878/common/go/lifecycle/graceful"
-	"github.com/Arif9878/common/go/observability/logging"
 	"github.com/Arif9878/common/go/requestid"
 	"github.com/Arif9878/common/go/transport/grpc/grpcclient"
 	"github.com/Arif9878/common/go/transport/grpc/grpcserver"
@@ -130,19 +126,19 @@ var echoDesc = grpc.ServiceDesc{
 type userKey struct{}
 
 type env struct {
-	conn   *grpc.ClientConn
-	logs   *bytes.Buffer
-	spans  *tracetest.SpanRecorder
-	reader *sdkmetric.ManualReader
-	server *echoServer
+	conn    *grpc.ClientConn
+	logs    *testkit.Logs
+	spans   *testkit.Spans
+	metrics *testkit.Metrics
+	server  *echoServer
 }
 
 func setup(t *testing.T, serverOpts []grpcserver.Option, clientOpts ...grpcclient.Option) *env {
 	t.Helper()
-	e := &env{logs: &bytes.Buffer{}, spans: tracetest.NewSpanRecorder(), reader: sdkmetric.NewManualReader(), server: &echoServer{}}
-	logger, _ := logging.New(logging.Config{}, logging.WithWriter(e.logs))
-	tp := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(e.spans))
-	mp := sdkmetric.NewMeterProvider(sdkmetric.WithReader(e.reader))
+	logger, logs := testkit.NewLogger(t)
+	mp, metrics := testkit.NewMetrics(t)
+	tp, spans := testkit.NewTracer(t)
+	e := &env{logs: logs, spans: spans, metrics: metrics, server: &echoServer{}}
 	prop := propagation.TraceContext{}
 
 	srv := grpcserver.New(append([]grpcserver.Option{
@@ -175,21 +171,7 @@ func (e *env) echo(ctx context.Context, in string, opts ...grpc.CallOption) (str
 	return out.GetValue(), err
 }
 
-func (e *env) accessLogs(t *testing.T) []map[string]any {
-	t.Helper()
-	var out []map[string]any
-	dec := json.NewDecoder(bytes.NewReader(e.logs.Bytes()))
-	for dec.More() {
-		var m map[string]any
-		if err := dec.Decode(&m); err != nil {
-			t.Fatal(err)
-		}
-		if m["msg"] == "grpc call" {
-			out = append(out, m)
-		}
-	}
-	return out
-}
+func (e *env) accessLogs(*testing.T) []testkit.Record { return e.logs.Messages("grpc call") }
 
 func TestErrorMapping(t *testing.T) {
 	e := setup(t, nil)
@@ -213,7 +195,7 @@ func TestErrorMapping(t *testing.T) {
 				tt.in, status.Code(err), s.Message(), errors.KindOf(err), tt.code, tt.message, tt.kind)
 		}
 	}
-	if strings.Contains(e.logs.String(), secretDetail) == false {
+	if !e.logs.Contains(secretDetail) {
 		t.Error("full error missing from the server log")
 	}
 	if out, err := e.echo(context.Background(), "after-panic"); err != nil || out != "after-panic" {
@@ -248,7 +230,7 @@ func TestAccessLogAndRequestID(t *testing.T) {
 	if last["grpc.code"] != "Internal" || last["level"] != "ERROR" || last["error_type"] != "internal" {
 		t.Errorf("panic access log = %v", last)
 	}
-	if !strings.Contains(e.logs.String(), `"stack"`) {
+	if !e.logs.Contains(`"stack"`) {
 		t.Error("panic logged without stack")
 	}
 }
@@ -317,18 +299,8 @@ func TestTracingAndMetrics(t *testing.T) {
 		t.Error("server span is not a child of the client span")
 	}
 
-	var rm metricdata.ResourceMetrics
-	if err := e.reader.Collect(context.Background(), &rm); err != nil {
-		t.Fatal(err)
-	}
-	names := map[string]bool{}
-	for _, sm := range rm.ScopeMetrics {
-		for _, m := range sm.Metrics {
-			names[m.Name] = true
-		}
-	}
-	if !names["rpc.server.call.duration"] || !names["rpc.client.call.duration"] {
-		t.Errorf("metrics = %v", names)
+	if !e.metrics.Has("rpc.server.call.duration") || !e.metrics.Has("rpc.client.call.duration") {
+		t.Error("rpc.server.call.duration or rpc.client.call.duration not recorded")
 	}
 }
 

@@ -15,12 +15,12 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Arif9878/common/go/testkit"
+
 	"github.com/twmb/franz-go/pkg/kadm"
 	"github.com/twmb/franz-go/pkg/kfake"
 	"github.com/twmb/franz-go/pkg/kgo"
 	"go.opentelemetry.io/otel/propagation"
-	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
-	"go.opentelemetry.io/otel/sdk/metric/metricdata"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	"go.opentelemetry.io/otel/trace"
 
@@ -177,17 +177,6 @@ func running(t *testing.T, c *kafka.Consumer) {
 	})
 }
 
-func waitFor(t *testing.T, what string, cond func() bool) {
-	t.Helper()
-	deadline := time.Now().Add(15 * time.Second)
-	for !cond() {
-		if time.Now().After(deadline) {
-			t.Fatalf("timed out waiting for %s", what)
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
-}
-
 // collector records handled values thread-safely.
 type collector struct {
 	mu     sync.Mutex
@@ -235,7 +224,7 @@ func TestProduceConsumeOrderingAndCommit(t *testing.T) {
 	}
 	done := make(chan error, 1)
 	go func() { done <- c.Run(context.Background()) }()
-	waitFor(t, "200 records", func() bool { return got.len() >= 200 })
+	testkit.Eventually(t, 30*time.Second, "200 records", func() bool { return got.len() >= 200 })
 	if err := c.Close(context.Background()); err != nil {
 		t.Fatal(err)
 	}
@@ -258,7 +247,7 @@ func TestProduceConsumeOrderingAndCommit(t *testing.T) {
 	}
 	running(t, c2)
 	publish(t, p, k.T("orders"), "key-0", "9999")
-	waitFor(t, "the new record", func() bool { return again.len() >= 1 })
+	testkit.Eventually(t, 30*time.Second, "the new record", func() bool { return again.len() >= 1 })
 	if vals := again.snapshot(); len(vals) != 1 || vals[0] != "9999" {
 		t.Errorf("after restart got %v, want only the new record", vals)
 	}
@@ -281,7 +270,7 @@ func TestRetryThenSuccess(t *testing.T) {
 		t.Fatal(err)
 	}
 	running(t, c)
-	waitFor(t, "success", done.Load)
+	testkit.Eventually(t, 30*time.Second, "success", done.Load)
 	if attempts.Load() != 3 {
 		t.Errorf("attempts = %d", attempts.Load())
 	}
@@ -302,7 +291,7 @@ func consumeAll(t *testing.T, k *kafkaEnv, topic string, n int) []*kgo.Record {
 		t.Fatal(err)
 	}
 	running(t, c)
-	waitFor(t, fmt.Sprintf("%d records on %s", n, topic), func() bool {
+	testkit.Eventually(t, 30*time.Second, fmt.Sprintf("%d records on %s", n, topic), func() bool {
 		mu.Lock()
 		defer mu.Unlock()
 		return len(out) >= n
@@ -344,7 +333,7 @@ func TestPoisonToDLQ(t *testing.T) {
 	running(t, c)
 
 	dlq := consumeAll(t, k, k.T("events.dlq"), 2)
-	waitFor(t, "good records", func() bool { return got.len() == 2 })
+	testkit.Eventually(t, 30*time.Second, "good records", func() bool { return got.len() == 2 })
 	if string(dlq[0].Value) != "poison" || header(dlq[0], "dlq.error.kind") != "invalid_argument" ||
 		header(dlq[0], "dlq.original.topic") != k.T("events") || header(dlq[0], "dlq.original.offset") != "1" {
 		t.Errorf("dlq record = %s %v", dlq[0].Value, dlq[0].Headers)
@@ -370,21 +359,21 @@ func TestFailureStopsPartitionByDefault(t *testing.T) {
 		}
 	}
 	reader1 := &collector{}
-	reg := sdkmetric.NewManualReader()
+	mp, metrics := testkit.NewMetrics(t)
 	c, err := kafka.NewConsumer(context.Background(), cfg, k.G("g"), []string{k.T("t")}, reader(reader1), quiet,
-		kafka.WithMeterProvider(sdkmetric.NewMeterProvider(sdkmetric.WithReader(reg))))
+		kafka.WithMeterProvider(mp))
 	if err != nil {
 		t.Fatal(err)
 	}
 	done := make(chan error, 1)
 	go func() { done <- c.Run(context.Background()) }()
-	waitFor(t, "poison", func() bool { return reader1.len() >= 2 })
+	testkit.Eventually(t, 30*time.Second, "poison", func() bool { return reader1.len() >= 2 })
 	time.Sleep(300 * time.Millisecond) // give it a chance to (wrongly) continue
 	if vals := reader1.snapshot(); len(vals) != 2 {
 		t.Fatalf("handled %v after the failure; partition should be stopped", vals)
 	}
-	if v := gauge(t, reg, "kafka.consumer.partitions.stopped"); v != 1 {
-		t.Errorf("partitions.stopped = %d", v)
+	if v := metrics.Gauge("kafka.consumer.partitions.stopped"); v != 1 {
+		t.Errorf("partitions.stopped = %v", v)
 	}
 	if err := c.Close(context.Background()); err != nil {
 		t.Fatal(err)
@@ -398,7 +387,7 @@ func TestFailureStopsPartitionByDefault(t *testing.T) {
 		t.Fatal(err)
 	}
 	running(t, c2)
-	waitFor(t, "redelivery", func() bool { return reader2.len() >= 1 })
+	testkit.Eventually(t, 30*time.Second, "redelivery", func() bool { return reader2.len() >= 1 })
 	if first := reader2.snapshot()[0]; first != "poison" {
 		t.Errorf("restart began at %q, want the failed record", first)
 	}
@@ -420,7 +409,7 @@ func TestSkipOnFailure(t *testing.T) {
 		t.Fatal(err)
 	}
 	running(t, c)
-	waitFor(t, "records after the skipped one", func() bool { return got.len() == 2 })
+	testkit.Eventually(t, 30*time.Second, "records after the skipped one", func() bool { return got.len() == 2 })
 }
 
 func TestBatchConsumerWithPartialFailure(t *testing.T) {
@@ -462,7 +451,7 @@ func TestBatchConsumerWithPartialFailure(t *testing.T) {
 	if string(dlq[0].Value) != "bad" || string(dlq[6].Value) != "19" {
 		t.Errorf("dlq = %s .. %s", dlq[0].Value, dlq[6].Value)
 	}
-	waitFor(t, "last batch", func() bool {
+	testkit.Eventually(t, 30*time.Second, "last batch", func() bool {
 		mu.Lock()
 		defer mu.Unlock()
 		return len(handled) >= 18
@@ -498,7 +487,7 @@ func TestConcurrencyLimit(t *testing.T) {
 		t.Fatal(err)
 	}
 	running(t, c)
-	waitFor(t, "64 records", func() bool { return n.Load() == 64 })
+	testkit.Eventually(t, 30*time.Second, "64 records", func() bool { return n.Load() == 64 })
 	if peak.Load() != 2 {
 		t.Errorf("peak concurrency = %d, want 2", peak.Load())
 	}
@@ -569,7 +558,7 @@ func TestCloseWaitsForInFlight(t *testing.T) {
 		func(_ context.Context, r *kgo.Record) error { again.add(r); return nil }, quiet)
 	running(t, c2)
 	publish(t, p, k.T("t"), "k", "2")
-	waitFor(t, "new record", func() bool { return again.len() >= 1 })
+	testkit.Eventually(t, 30*time.Second, "new record", func() bool { return again.len() >= 1 })
 	if vals := again.snapshot(); vals[0] != "2" {
 		t.Errorf("redelivered %v after a clean close", vals)
 	}
@@ -600,7 +589,7 @@ func TestCloseDeadlineCancelsHandlers(t *testing.T) {
 		t.Fatalf("Close = %v after %v", err, time.Since(start))
 	}
 	<-done
-	waitFor(t, "handler cancellation", canceled.Load)
+	testkit.Eventually(t, 30*time.Second, "handler cancellation", canceled.Load)
 }
 
 func TestRebalanceProcessesEverything(t *testing.T) {
@@ -631,7 +620,7 @@ func TestRebalanceProcessesEverything(t *testing.T) {
 			running(t, c2)
 		}
 	}
-	waitFor(t, "all 300 records across the rebalance", func() bool { return total.Load() == 300 })
+	testkit.Eventually(t, 30*time.Second, "all 300 records across the rebalance", func() bool { return total.Load() == 300 })
 }
 
 func TestTypedJSON(t *testing.T) {
@@ -713,21 +702,4 @@ func TestConfigErrors(t *testing.T) {
 	if _, err := kafka.NewProducer(ctx, kafka.Config{Brokers: []string{"127.0.0.1:1"}}, quiet); errors.KindOf(err) != errors.Unavailable {
 		t.Errorf("unreachable: %v (kind %v)", err, errors.KindOf(err))
 	}
-}
-
-func gauge(t *testing.T, r *sdkmetric.ManualReader, name string) int64 {
-	t.Helper()
-	var rm metricdata.ResourceMetrics
-	if err := r.Collect(context.Background(), &rm); err != nil {
-		t.Fatal(err)
-	}
-	for _, sm := range rm.ScopeMetrics {
-		for _, m := range sm.Metrics {
-			if m.Name == name {
-				return m.Data.(metricdata.Gauge[int64]).DataPoints[0].Value
-			}
-		}
-	}
-	t.Fatalf("metric %s not found", name)
-	return 0
 }

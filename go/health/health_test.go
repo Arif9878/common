@@ -1,7 +1,6 @@
 package health_test
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	stderrors "errors"
@@ -16,9 +15,9 @@ import (
 	"testing/synctest"
 	"time"
 
+	"github.com/Arif9878/common/go/testkit"
+
 	"go.opentelemetry.io/otel/attribute"
-	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
-	"go.opentelemetry.io/otel/sdk/metric/metricdata"
 
 	"github.com/Arif9878/common/go/errors"
 	"github.com/Arif9878/common/go/health"
@@ -309,8 +308,8 @@ func TestRegistrationPanics(t *testing.T) {
 }
 
 func TestLogsOnlyTransitions(t *testing.T) {
-	var buf bytes.Buffer
-	h := health.New(health.WithLogger(slog.New(slog.NewJSONHandler(&buf, nil))), health.WithCacheTTL(0))
+	logger, logs := testkit.NewLogger(t)
+	h := health.New(health.WithLogger(logger), health.WithCacheTTL(0))
 	h.MarkStarted()
 	var down atomic.Bool
 	h.AddReadiness("db", func(context.Context) error {
@@ -328,7 +327,7 @@ func TestLogsOnlyTransitions(t *testing.T) {
 	down.Store(false)
 	h.Ready(context.Background())
 
-	out := buf.String()
+	out := logs.String()
 	if n := strings.Count(out, "health check failing"); n != 1 {
 		t.Errorf("failing logged %d times:\n%s", n, out)
 	}
@@ -341,33 +340,15 @@ func TestLogsOnlyTransitions(t *testing.T) {
 }
 
 func TestMetrics(t *testing.T) {
-	reader := sdkmetric.NewManualReader()
-	mp := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))
+	mp, m := testkit.NewMetrics(t)
 	h := health.New(quiet, health.WithMeterProvider(mp))
 	h.MarkStarted()
 	h.AddReadiness("db", ok)
 	h.Ready(context.Background())
 
-	var rm metricdata.ResourceMetrics
-	if err := reader.Collect(context.Background(), &rm); err != nil {
-		t.Fatal(err)
+	got := m.HistogramCount("health.check.duration",
+		attribute.String("probe", "ready"), attribute.String("check", "db"), attribute.String("outcome", "ok"))
+	if got != 1 {
+		t.Errorf("health.check.duration{probe=ready,check=db,outcome=ok} count = %d, want 1", got)
 	}
-	for _, sm := range rm.ScopeMetrics {
-		for _, m := range sm.Metrics {
-			if m.Name != "health.check.duration" {
-				continue
-			}
-			dps := m.Data.(metricdata.Histogram[float64]).DataPoints
-			if len(dps) != 1 || dps[0].Count != 1 {
-				t.Fatalf("datapoints = %+v", dps)
-			}
-			for _, kv := range [][2]string{{"probe", "ready"}, {"check", "db"}, {"outcome", "ok"}} {
-				if v, found := dps[0].Attributes.Value(attribute.Key(kv[0])); !found || v.AsString() != kv[1] {
-					t.Errorf("attribute %s = %v", kv[0], v)
-				}
-			}
-			return
-		}
-	}
-	t.Fatal("health.check.duration not recorded")
 }

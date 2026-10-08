@@ -546,10 +546,12 @@ manual wiring. A mutation check (telemetry not passed to the HTTP middleware) ma
 
 ## 12. Not yet done
 
-- `testkit` (spec §25: test logger, metric helpers). The planned clock became `testing/synctest`,
-  and the fakes landed with their packages (`secret.Static`, `featureflag.Static`,
-  `idempotency.NewMemoryStore`, `idempotencytest`, `locktest`). Log-capture and metric-collection
-  boilerplate is repeated across test files and would be worth extracting.
+- ~~`testkit`~~: done. `testkit` holds the helpers that test code repeated: `NewLogger`
+  (production logger capturing records), `NewMetrics` (`Sum`, `Gauge`, `HistogramCount`,
+  `HistogramSum`, which fail on an unknown metric name), `NewTracer`, `Eventually`, `FreeAddr`
+  and `Getenv`; `testkit/pgtest` gives a PostgreSQL connection from `POSTGRES_TEST_URL`.
+  Deterministic time is `testing/synctest`; fakes stay with their packages. It is not an
+  assertion framework, and a lint rule keeps production code from importing it.
 - Module split of the heavy integrations before v1.0 (§2); `go/fx` is already separate.
 
 ## 13. Open questions for the team

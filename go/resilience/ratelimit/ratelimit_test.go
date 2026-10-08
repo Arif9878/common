@@ -8,8 +8,9 @@ import (
 	"testing/synctest"
 	"time"
 
-	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
-	"go.opentelemetry.io/otel/sdk/metric/metricdata"
+	"go.opentelemetry.io/otel/attribute"
+
+	"github.com/Arif9878/common/go/testkit"
 
 	"github.com/Arif9878/common/go/errors"
 	"github.com/Arif9878/common/go/resilience/ratelimit"
@@ -179,31 +180,19 @@ func TestRetryHonorsRetryAfter(t *testing.T) {
 
 func TestMetrics(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
-		reader := sdkmetric.NewManualReader()
-		mp := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))
+		mp, m := testkit.NewMetrics(t)
 		l := ratelimit.New("api", 10, 1, ratelimit.WithMeterProvider(mp))
 		l.Allow()                        // allowed
 		l.Allow()                        // limited
 		_ = l.Wait(context.Background()) // delayed
 
-		var rm metricdata.ResourceMetrics
-		if err := reader.Collect(context.Background(), &rm); err != nil {
-			t.Fatal(err)
-		}
-		outcomes := map[string]int64{}
-		for _, m := range rm.ScopeMetrics[0].Metrics {
-			if sum, ok := m.Data.(metricdata.Sum[int64]); ok {
-				for _, dp := range sum.DataPoints {
-					o, _ := dp.Attributes.Value("outcome")
-					outcomes[o.AsString()] = dp.Value
-				}
-			}
-		}
 		for _, o := range []string{"allowed", "limited", "delayed"} {
-			if outcomes[o] != 1 {
-				t.Errorf("outcomes = %v", outcomes)
-				break
+			if got := m.Sum("ratelimit.requests", attribute.String("limiter", "api"), attribute.String("outcome", o)); got != 1 {
+				t.Errorf("ratelimit.requests{outcome=%s} = %v, want 1", o, got)
 			}
+		}
+		if got := m.HistogramCount("ratelimit.wait.duration"); got != 1 {
+			t.Errorf("wait histogram count = %d", got)
 		}
 	})
 }

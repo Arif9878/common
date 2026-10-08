@@ -4,16 +4,15 @@ import (
 	"context"
 	"encoding/json"
 	"io"
-	"net"
 	"net/http"
 	"net/http/httptest"
-	"net/url"
-	"os"
-	"strconv"
 	"strings"
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/Arif9878/common/go/testkit"
+	"github.com/Arif9878/common/go/testkit/pgtest"
 
 	"github.com/alicebob/miniredis/v2"
 	"github.com/twmb/franz-go/pkg/kfake"
@@ -38,16 +37,6 @@ import (
 	"github.com/Arif9878/common/go/transport/grpc/grpcclient"
 	"github.com/Arif9878/common/go/transport/http/httpserver"
 )
-
-func freeAddr(t *testing.T) string {
-	t.Helper()
-	ln, err := (&net.ListenConfig{}).Listen(context.Background(), "tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer func() { _ = ln.Close() }()
-	return ln.Addr().String()
-}
 
 func get(t *testing.T, url string) (int, string) {
 	t.Helper()
@@ -97,7 +86,7 @@ func TestFullApplication(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer cluster.Close()
-	httpAddr, adminAddr := freeAddr(t), freeAddr(t)
+	httpAddr, adminAddr := testkit.FreeAddr(t), testkit.FreeAddr(t)
 
 	env := map[string]string{
 		"LOG_LEVEL":     "error",
@@ -271,7 +260,7 @@ func TestVault(t *testing.T) {
 }
 
 func TestGRPCServer(t *testing.T) {
-	addr := freeAddr(t)
+	addr := testkit.FreeAddr(t)
 	var g *graceful.Manager
 	app := fxtest.New(t,
 		fx.Supply(commonfx.GRPCConfig{Addr: addr}),
@@ -300,18 +289,10 @@ func TestGRPCServer(t *testing.T) {
 }
 
 func TestPostgres(t *testing.T) {
-	raw := os.Getenv("POSTGRES_TEST_URL")
-	if raw == "" {
-		t.Skip("POSTGRES_TEST_URL not set")
-	}
-	u, _ := url.Parse(raw)
-	port, _ := strconv.Atoi(u.Port())
-	pw, _ := u.User.Password()
 	var db *postgres.DB
 	var checks *health.Checker
 	app := fxtest.New(t,
-		fx.Supply(postgres.Config{Host: u.Hostname(), Port: port, Database: strings.TrimPrefix(u.Path, "/"),
-			User: u.User.Username(), Password: config.Secret(pw), SSLMode: "disable"}),
+		fx.Supply(pgtest.Config(t)),
 		commonfx.Lifecycle(),
 		commonfx.Postgres(),
 		fx.Populate(&db, &checks),

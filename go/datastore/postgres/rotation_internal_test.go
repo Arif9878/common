@@ -12,6 +12,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Arif9878/common/go/testkit"
+
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/jackc/puddle/v2"
@@ -51,13 +53,9 @@ func TestOperationRacingRotationIsRetried(t *testing.T) {
 			if err := db.Rotate(context.Background()); err != nil {
 				t.Fatal(err)
 			}
-			deadline := time.Now().Add(5 * time.Second)
-			for !errors.Is(p.Ping(context.Background()), puddle.ErrClosedPool) {
-				if time.Now().After(deadline) {
-					t.Fatal("old pool never closed")
-				}
-				time.Sleep(5 * time.Millisecond)
-			}
+			testkit.Eventually(t, 5*time.Second, "the old pool to close", func() bool {
+				return errors.Is(p.Ping(context.Background()), puddle.ErrClosedPool)
+			})
 		}
 		_, err := p.Exec(context.Background(), "SELECT 1")
 		return struct{}{}, err

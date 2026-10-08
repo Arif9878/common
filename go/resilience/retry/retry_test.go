@@ -9,8 +9,9 @@ import (
 	"testing/synctest"
 	"time"
 
-	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
-	"go.opentelemetry.io/otel/sdk/metric/metricdata"
+	"go.opentelemetry.io/otel/attribute"
+
+	"github.com/Arif9878/common/go/testkit"
 
 	"github.com/Arif9878/common/go/errors"
 	"github.com/Arif9878/common/go/resilience/retry"
@@ -269,8 +270,7 @@ func TestSharedPolicyConcurrent(t *testing.T) {
 
 func TestMetrics(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
-		reader := sdkmetric.NewManualReader()
-		mp := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))
+		mp, m := testkit.NewMetrics(t)
 		p := retry.New(retry.WithName("op"), retry.WithMeterProvider(mp), retry.WithMaxAttempts(2))
 
 		op, _ := failing(1, errTransient)
@@ -278,20 +278,10 @@ func TestMetrics(t *testing.T) {
 		op, _ = failing(5, errTransient)
 		_ = p.Do(context.Background(), op) // retry, exhausted
 
-		var rm metricdata.ResourceMetrics
-		if err := reader.Collect(context.Background(), &rm); err != nil {
-			t.Fatal(err)
-		}
-		got := map[string]int64{}
-		for _, dp := range rm.ScopeMetrics[0].Metrics[0].Data.(metricdata.Sum[int64]).DataPoints {
-			outcome, _ := dp.Attributes.Value("outcome")
-			got[outcome.AsString()] = dp.Value
-		}
-		want := map[string]int64{"retry": 2, "success": 1, "exhausted": 1}
-		for k, v := range want {
-			if got[k] != v {
-				t.Errorf("outcomes = %v, want %v", got, want)
-				break
+		for outcome, want := range map[string]float64{"retry": 2, "success": 1, "exhausted": 1} {
+			got := m.Sum("retry.attempts", attribute.String("operation", "op"), attribute.String("outcome", outcome))
+			if got != want {
+				t.Errorf("retry.attempts{outcome=%s} = %v, want %v", outcome, got, want)
 			}
 		}
 	})
