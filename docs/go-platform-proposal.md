@@ -184,21 +184,25 @@ Logging wraps the `slog.Handler` once to (a) add `trace_id`, `span_id` and
 `request_id` from the context and (b) redact keys on a deny-list such as
 `password`, `token`, `authorization` and `secret`. That costs one handler wrapper and nothing per call site.
 
-### resilience
+### resilience — ✅ implemented
 ```go
-retry.Do(ctx, op func(ctx) error, ...Option) error
-retry.DoValue[T](ctx, op func(ctx) (T, error), ...Option) (T, error)
-//   defaults: 3 attempts, 100ms→2s exp backoff, full jitter, MaxElapsed 30s, predicate = errors.IsRetryable
-//   errors carry attempt count; retry.Permanent(err) short-circuits
+retry.Do(ctx, op, opts...) error / retry.DoValue[T](ctx, op, opts...) (T, error)
+p := retry.New(opts...); p.Do(ctx, op); retry.DoValueWith(ctx, p, op)   // reusable, ~50ns overhead
+//   defaults: 3 attempts, 100ms→5s exponential, full jitter, retry only errors.IsRetryable
+//   never sleeps past ctx deadline / WithMaxElapsed; honours RetryAfter(); retry.Permanent(err)
 
-cb := circuitbreaker.New(name, ...Option)        // wraps sony/gobreaker/v2
-circuitbreaker.Execute[T](ctx, cb, op) (T, error) // returns ErrOpen (Kind Unavailable) when open
+cb := circuitbreaker.New("payments-api", opts...)   // wraps sony/gobreaker/v2 two-step breaker
+circuitbreaker.Execute[T](ctx, cb, op) / cb.Execute(ctx, op)  // ErrOpen: kind Unavailable
+//   default: 5 consecutive failures, 10s cooldown, 1 half-open probe; WithFailureRatio + WithWindow
+//   failures = timeout/unavailable/rate_limited/internal/unknown; client errors = success;
+//   canceled = not counted; panics recorded as failure and re-raised (half-open never wedges)
 
-rl := ratelimit.NewLocal(rate, burst, ...Option) // wraps golang.org/x/time/rate
-rl.Allow() bool; rl.Wait(ctx) error               // Wait bounded by WithMaxWait
-type Limiter interface { Allow(ctx, key string) (bool, error) } // distributed impls live in redis module
+lim := ratelimit.New("partner-api", 50, 10)        // wraps golang.org/x/time/rate
+lim.Allow() bool; lim.Wait(ctx) error               // Wait bounded (1s default); rejects up front
+//   *LimitedError: kind RateLimited, RetryAfter() → used by retry, usable for HTTP Retry-After
 ```
-Composition is explicit, for example `retry.Do(ctx, func(ctx) error { return cb.Execute(ctx, call) })`.
+Composition is explicit: retry outside, breaker inside. Distributed rate limiting is
+deferred to the redis module.
 
 ### concurrency
 ```go
@@ -395,7 +399,7 @@ Each step is one PR, reviewable on its own.
 | 3 | ✅ `observability/tracing`, `observability/metrics` (legacy `logger`, `observability` marked Deprecated) | 2 |
 | 4 | ✅ `config` | 1 |
 | 5 | ✅ `lifecycle/graceful`, `health` | 2 |
-| 6 | `resilience/retry`, `circuitbreaker`, `ratelimit` | 1 |
+| 6 | ✅ `resilience/retry`, `circuitbreaker`, `ratelimit` | 1 |
 | 7 | `concurrency/workerpool`, `batch` | 1 |
 | 8 | `transport/http` (server + client), `echoadapter` | 2–7 |
 | 9 | `secret`, `secret/rotation` | 6 |

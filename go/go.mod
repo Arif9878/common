@@ -12,6 +12,7 @@ require (
 	github.com/prometheus/client_golang v1.24.1
 	github.com/satori/go.uuid v1.2.0
 	github.com/sirupsen/logrus v1.10.2
+	github.com/sony/gobreaker/v2 v2.4.0
 	go.opentelemetry.io/otel v1.47.0
 	go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc v1.47.0
 	go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp v1.47.0
@@ -20,6 +21,7 @@ require (
 	go.opentelemetry.io/otel/sdk v1.47.0
 	go.opentelemetry.io/otel/sdk/metric v1.47.0
 	go.opentelemetry.io/otel/trace v1.47.0
+	golang.org/x/time v0.16.0
 )
 
 require (
