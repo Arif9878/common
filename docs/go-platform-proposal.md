@@ -362,7 +362,7 @@ Each step is one PR, reviewable on its own.
 | # | Scope | Depends on |
 |---|---|---|
 | 0 | ✅ `go 1.26`, dependency upgrade (clears 7 of 8 reachable vulns), CI (`.github/workflows/go.yml`), `go/Makefile`, `go/.golangci.yml` (legacy paths excluded, depguard rules) | — |
-| 0b | Legacy JWT middleware: `jwt` v3 → v5 (GO-2025-3553, no v3 fix) and signing key via parameter instead of `"secret"` | 0 |
+| 0b | ✅ Legacy JWT middleware: `jwt` v3 → v5 (GO-2025-3553, no v3 fix) and signing key via parameter instead of `"secret"`, `APP_ENV=test` auth bypass removed | 0 |
 | 1 | `errors` | 0 |
 | 2 | `observability/logging`, `requestid` | 1 |
 | 3 | `observability/tracing`, `observability/metrics` (replaces broken `observability`) | 2 |
