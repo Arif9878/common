@@ -143,10 +143,11 @@ type Consumer struct {
 	closeOnce sync.Once
 	closeErr  error
 
-	records  metric.Int64Counter
-	duration metric.Float64Histogram
-	size     metric.Int64Histogram
-	reg      metric.Registration
+	records    metric.Int64Counter
+	duration   metric.Float64Histogram
+	size       metric.Int64Histogram
+	duplicates metric.Int64Counter
+	reg        metric.Registration
 }
 
 // NewConsumer creates a consumer of topics in group, calling h for each
@@ -174,6 +175,9 @@ func newConsumer(ctx context.Context, cfg Config, group string, topics []string,
 	if o.dlq != nil && o.dlqTopic == "" {
 		return nil, errors.InvalidArgument.New("kafka: WithDLQ needs a topic")
 	}
+	if o.idem != nil && o.idem.Store == nil {
+		return nil, errors.InvalidArgument.New("kafka: WithIdempotency needs a store")
+	}
 	c := &Consumer{
 		o: o, group: group, batch: batch, handle: h,
 		sem:     make(chan struct{}, o.concurrency),
@@ -182,6 +186,9 @@ func newConsumer(ctx context.Context, cfg Config, group string, topics []string,
 		runDone: make(chan struct{}),
 		tracer: kotel.NewTracer(kotel.TracerProvider(o.tracerProv), kotel.TracerPropagator(o.propagators),
 			kotel.ConsumerGroup(group)),
+	}
+	if o.idem != nil {
+		c.handle = c.idempotent(h)
 	}
 	c.handlerCtx, c.abort = context.WithCancel(context.Background())
 	c.initMetrics()
@@ -225,6 +232,8 @@ func (c *Consumer) initMetrics() {
 	c.size, _ = meter.Int64Histogram("kafka.consumer.batch.size", metric.WithUnit("{record}"),
 		metric.WithDescription("Records per handler call."),
 		metric.WithExplicitBucketBoundaries(1, 5, 10, 25, 50, 100, 250, 500, 1000))
+	c.duplicates, _ = meter.Int64Counter("kafka.consumer.duplicates",
+		metric.WithDescription("Records skipped by WithIdempotency because they were already processed. They are also counted as success."))
 	lag, _ := meter.Int64ObservableGauge("kafka.consumer.lag", metric.WithUnit("{record}"),
 		metric.WithDescription("Records behind the high watermark at the last poll, per partition."))
 	stopped, _ := meter.Int64ObservableGauge("kafka.consumer.partitions.stopped", metric.WithUnit("{partition}"),

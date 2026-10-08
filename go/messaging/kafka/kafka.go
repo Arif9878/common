@@ -53,6 +53,21 @@
 // remaining records are retried. Any other error retries or fails the
 // whole batch.
 //
+// # Idempotency
+//
+// [WithIdempotency] skips records already processed, using an idempotency.Store
+// shared by all replicas, such as Redis:
+//
+//	kafka.WithIdempotency(kafka.Idempotency{Store: redisstore.New(rdb)})
+//
+// Each record's key (by default group, topic, partition and offset; see
+// HeaderKey for event IDs) is claimed before the handler runs and completed
+// after it succeeds. Records whose key is already completed are committed
+// without calling the handler and counted in kafka.consumer.duplicates. A key
+// still claimed by another consumer is retried later, which keeps partition
+// order. Processing stays at least once across a crash between the handler's
+// side effects and completing the key; see the idempotency package.
+//
 // # Rebalancing
 //
 // When partitions are revoked, their workers stop taking new records,
@@ -164,6 +179,7 @@ type options struct {
 	maxPollRecords  int
 	commitInterval  time.Duration
 	resetToLatest   bool
+	idem            *Idempotency
 }
 
 func newOptions(opts []Option) options {
