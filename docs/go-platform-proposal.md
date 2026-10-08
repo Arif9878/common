@@ -343,13 +343,17 @@ type BatchHandler func(ctx, []*kgo.Record) error   // per-partition batch
 
 ## 7. Observability strategy
 
-- **Metric names**: `<domain>_<thing>_<unit>`. Examples: `http_server_request_duration_seconds`,
-  `kafka_consumer_records_total`, `workerpool_queue_depth`, `secret_rotation_total`.
-  HTTP, gRPC and DB metrics follow OTel semantic conventions where they exist.
+- **Metric names**: OpenTelemetry instrument names (dot-separated, unit in the unit
+  field), translated by the Prometheus exporter: `http.server.request.duration` + unit `s`
+  → `http_server_request_duration_seconds`; counters gain `_total`. Durations are float
+  seconds; histograms default to 5ms–10s buckets, and non-duration histograms must
+  declare boundaries. HTTP, gRPC, DB and messaging metrics use OTel semantic conventions.
+  Service identity is in `target_info`, not on every series.
 - **Allowed label values** are bounded enums or config-time names: `service`, `method`,
   `route` (the template, never the raw path), `status_class`, `topic`, `partition`, `outcome`,
   `error_kind`, `pool`, `breaker`. **Forbidden**: user IDs, request IDs, raw URLs, error
-  messages, keys and offsets. A `metrics.Label` helper rejects values outside an allow-list in tests.
+  messages, keys and offsets. Enforced at runtime by the SDK cardinality limit
+  (2000 series per instrument; excess is folded into `otel_metric_overflow="true"`).
 - **Traces**: W3C `traceparent` and baggage. Propagation goes through HTTP headers, gRPC
   metadata and Kafka record headers (kotel), so HTTP → A → Kafka → B → Postgres is one trace.
   The span attribute allow-list mirrors the logging deny-list. Bodies and payloads are never recorded.
@@ -376,7 +380,7 @@ Each step is one PR, reviewable on its own.
 | 0b | ✅ Legacy JWT middleware: `jwt` v3 → v5 (GO-2025-3553, no v3 fix) and signing key via parameter instead of `"secret"`, `APP_ENV=test` auth bypass removed | 0 |
 | 1 | ✅ `errors` | 0 |
 | 2 | ✅ `observability/logging`, `requestid` | 1 |
-| 3 | `observability/tracing`, `observability/metrics` (replaces broken `observability`) | 2 |
+| 3 | ✅ `observability/tracing`, `observability/metrics` (legacy `logger`, `observability` marked Deprecated) | 2 |
 | 4 | `config` | 1 |
 | 5 | `lifecycle/graceful`, `health` | 2 |
 | 6 | `resilience/retry`, `circuitbreaker`, `ratelimit` | 1 |
@@ -432,7 +436,7 @@ resilience before any infrastructure module exists.
 ## 12. Open questions for the team
 
 1. ~~Multi-module now, or single module until v1 (§2)?~~ Single module.
-2. Prometheus pull (`/metrics`) or OTLP push as the default metrics exporter?
+2. ~~Prometheus pull (`/metrics`) or OTLP push as the default metrics exporter?~~ Prometheus pull.
 3. Is Echo the organizational standard? That decides whether `echoadapter` is permanent or migration-only.
 4. Minimum Go version consumers must be on.
 5. ~~Approve the renames in §6.~~ Approved.
