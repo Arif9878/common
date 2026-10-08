@@ -3,7 +3,7 @@ module github.com/Arif9878/common/go/fx
 go 1.26.0
 
 require (
-	github.com/Arif9878/common/go v0.0.0-00010101000000-000000000000
+	github.com/Arif9878/common/go v0.2.0
 	github.com/alicebob/miniredis/v2 v2.39.0
 	github.com/hashicorp/vault/api v1.23.0
 	github.com/twmb/franz-go v1.22.1
