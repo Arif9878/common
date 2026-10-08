@@ -307,8 +307,9 @@ func (db *DB) initMetrics() {
 
 // Pool returns the current pool. Call it per operation; with rotation it
 // changes over time, and an operation started on a pool that is being
-// replaced fails with puddle.ErrClosedPool (before any I/O; retry it). The
-// DB methods retry automatically, so prefer them.
+// replaced can fail with puddle.ErrClosedPool or a *pgconn.ConnectError
+// before sending anything (retry it). The DB methods retry automatically,
+// so prefer them.
 func (db *DB) Pool() *pgxpool.Pool {
 	if db.rotator != nil {
 		return db.rotator.Current()
@@ -317,18 +318,31 @@ func (db *DB) Pool() *pgxpool.Pool {
 }
 
 // withPool calls f with the current pool. With rotation, a caller can read
-// the pool just before it is replaced and closed; its acquisition then fails
-// with puddle.ErrClosedPool before any connection or I/O, so it is safe to
-// retry on the new pool.
+// the pool just before it is replaced and closed, and its acquisition then
+// fails without any statement having been sent; see acquisitionFailed. Such
+// failures are retried on the new pool.
 func withPool[T any](db *DB, f func(p *pgxpool.Pool) (T, error)) (T, error) {
 	for attempt := 0; ; attempt++ {
 		p := db.Pool()
 		v, err := f(p)
-		if err != nil && db.rotator != nil && attempt < 3 && errors.Is(err, puddle.ErrClosedPool) && db.Pool() != p {
+		if err != nil && db.rotator != nil && attempt < 3 && acquisitionFailed(err) && db.Pool() != p {
 			continue
 		}
 		return v, err
 	}
+}
+
+// acquisitionFailed reports whether err means no connection was obtained,
+// so nothing was sent to the server and retrying cannot repeat a write:
+// either the pool was already closed (puddle.ErrClosedPool), or a new
+// connection was being established when the pool was closed, which cancels
+// it (*pgconn.ConnectError).
+func acquisitionFailed(err error) bool {
+	if errors.Is(err, puddle.ErrClosedPool) {
+		return true
+	}
+	_, ok := errors.AsType[*pgconn.ConnectError](err)
+	return ok
 }
 
 // Acquire returns a connection from the current pool. Release it when done.

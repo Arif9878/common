@@ -2,6 +2,7 @@ package postgres
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/url"
@@ -11,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/jackc/puddle/v2"
 
@@ -62,5 +64,26 @@ func TestOperationRacingRotationIsRetried(t *testing.T) {
 	})
 	if err != nil || attempts != 2 {
 		t.Fatalf("err = %v after %d attempts; want success on the new pool", err, attempts)
+	}
+}
+
+func TestAcquisitionFailed(t *testing.T) {
+	connectErr := &pgconn.ConnectError{}
+	tests := []struct {
+		err  error
+		want bool
+	}{
+		{puddle.ErrClosedPool, true},
+		{fmt.Errorf("acquire: %w", puddle.ErrClosedPool), true},
+		{connectErr, true},
+		{fmt.Errorf("query: %w", connectErr), true},
+		{&pgconn.PgError{Code: "23505"}, false}, // the statement ran
+		{context.DeadlineExceeded, false},
+		{io.ErrUnexpectedEOF, false}, // connection broke mid-query: may have run
+	}
+	for _, tt := range tests {
+		if got := acquisitionFailed(tt.err); got != tt.want {
+			t.Errorf("acquisitionFailed(%v) = %v, want %v", tt.err, got, tt.want)
+		}
 	}
 }
