@@ -174,8 +174,8 @@ func TestStopsBeforeContextDeadline(t *testing.T) {
 		if calls.Load() != 2 || time.Since(start) != 100*time.Millisecond {
 			t.Errorf("calls = %d after %v", calls.Load(), time.Since(start))
 		}
-		if !errors.Is(err, errTransient) || !errors.Is(err, context.DeadlineExceeded) {
-			t.Errorf("err = %v", err)
+		if !errors.Is(err, errTransient) || !errors.Is(err, context.DeadlineExceeded) || errors.KindOf(err) != errors.Timeout {
+			t.Errorf("err = %v, kind %v", err, errors.KindOf(err))
 		}
 	})
 }
@@ -192,8 +192,8 @@ func TestCanceledWhileWaiting(t *testing.T) {
 		if calls.Load() != 1 {
 			t.Errorf("calls = %d", calls.Load())
 		}
-		if !errors.Is(err, context.Canceled) || !errors.Is(err, errTransient) {
-			t.Errorf("err = %v", err)
+		if !errors.Is(err, context.Canceled) || !errors.Is(err, errTransient) || errors.KindOf(err) != errors.Canceled {
+			t.Errorf("err = %v, kind %v", err, errors.KindOf(err))
 		}
 	})
 }

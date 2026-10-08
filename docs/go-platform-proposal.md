@@ -276,13 +276,28 @@ and supports KV v2 plus dynamic `database/creds/*`. Errors are classified with
 `errors.Kind`. Error messages never include response bodies, because those can contain secret data.
 
 ### transports
-- **http server**: middleware `Recover`, `RequestID`, `Logging`, `Metrics`, `Tracing` (otelhttp),
-  `Timeout`, `MaxBytes`, `Auth(Authenticator)`. `Chain(...)` applies them in the documented order.
-  `server.Run(ctx, *http.Server, g *graceful.Group)`.
-- **http client**: `NewClient(cfg, ...Option) *http.Client`, built on a tuned `*http.Transport`
-  wrapped by `RoundTripper` middleware (tracing → metrics → requestid → circuit breaker → retry).
-  Retries only for idempotent methods, or when the request carries an `Idempotency-Key`,
-  and only if the body is rewindable (`GetBody != nil`).
+**HTTP — ✅ implemented** (`transport/http/httpserver`, `httpclient`, `echoadapter`)
+```go
+h := httpserver.Handler(mux, opts...)  // RequestID → Observe → Recover → MaxBytes(1MiB) → Timeout(30s)
+srv := httpserver.NewServer(cfg, h, logger)      // ReadHeader 5s, Read 30s, Write 35s, Idle 120s
+httpserver.Serve(shutdown, srv)                  // listen now (bind errors returned), serve under graceful
+httpserver.WriteError(w, r, err)                 // kind → status, RFC 9457 problem+json, PublicMessage only
+httpserver.StatusFor(err) int                    // 400/401/403/404/409/413/429/499/500/503/504
+httpserver.Auth(authenticate)                    // per route; unclassified auth errors → 401, never 500
+
+client := httpclient.New(cfg, httpclient.WithRetry(...), httpclient.WithCircuitBreaker(cb))
+//   per attempt: otelhttp span + http.client.request.duration, X-Request-ID propagated
+//   retry only idempotent methods or Idempotency-Key, rewindable bodies; 429/502/503/504 + network
+//   errors; Retry-After honoured; exhausted → last real response returned (nil error)
+
+e.Use(echoadapter.Middleware(opts...)); e.HTTPErrorHandler = echoadapter.ErrorHandler
+```
+Routes are templates: resolved from `*http.ServeMux` via `mux.Handler(r)` (the mux only sets
+`r.Pattern` on its inner request), from `c.Path()` in Echo, or `WithRoute`. Never logged:
+query strings, headers, bodies. Server metrics use semconv names; otelhttp's server metrics
+are disabled because it cannot see the route.
+
+**gRPC** (step 12):
 - **grpc**: `grpcserver.New(opts...) *grpc.Server` returns the native server; nothing is hidden.
   Interceptors come from go-grpc-middleware v2 (recovery, logging, auth, selector) plus
   otelgrpc stats handlers. `grpcclient.Dial(target, opts...) (*grpc.ClientConn, error)`
@@ -405,7 +420,7 @@ Each step is one PR, reviewable on its own.
 | 5 | ✅ `lifecycle/graceful`, `health` | 2 |
 | 6 | ✅ `resilience/retry`, `circuitbreaker`, `ratelimit` | 1 |
 | 7 | ✅ `concurrency/workerpool`, `batch` | 1 |
-| 8 | `transport/http` (server + client), `echoadapter` | 2–7 |
+| 8 | ✅ `transport/http` (server + client), `echoadapter` | 2–7 |
 | 9 | `secret`, `secret/rotation` | 6 |
 | 10 | `secret/vault` | 9 |
 | 11 | `datastore/postgres`, `datastore/redis` | 9 |

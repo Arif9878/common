@@ -1,3 +1,9 @@
+// Package middleware holds legacy Echo middleware.
+//
+// Deprecated: use echoadapter.Middleware from
+// github.com/Arif9878/common/go/transport/http/echoadapter (request ID,
+// tracing, metrics, logging, recovery) and httpserver.Auth for
+// authentication. This package will be removed in v1.0.
 package middleware
 
 import (

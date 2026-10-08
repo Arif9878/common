@@ -29,6 +29,12 @@ linters:
   exclusions:
     presets:
       - std-error-handling
+    rules:
+      # The client tests use a fake transport that constructs responses;
+      # bodyclose cannot follow their ownership.
+      - path: ^transport/http/httpclient/.*_test\.go$
+        linters:
+          - bodyclose
     # Legacy v0 packages are frozen and will be removed at v1.0; see
     # docs/go-platform-proposal.md §10. Do not add new code here.
     paths:

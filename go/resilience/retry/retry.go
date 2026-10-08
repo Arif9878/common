@@ -33,8 +33,10 @@
 //
 // On success Do returns nil. Otherwise it returns the last operation error,
 // wrapped with the attempt count; [errors.Is], [errors.As] and
-// [errors.KindOf] see the original. If ctx ends while waiting, the error
-// also wraps ctx's error.
+// [errors.KindOf] see the original. If ctx ends while waiting, or its
+// deadline is too close for another attempt, the error also wraps ctx's
+// error and its kind is Canceled or Timeout: the caller stopped, whatever
+// the last attempt failed with.
 package retry
 
 import (
@@ -193,8 +195,8 @@ func DoValueWith[T any](ctx context.Context, p *Policy, op func(ctx context.Cont
 		}
 		if deadline, ok := ctx.Deadline(); ok && now.Add(delay).After(deadline) {
 			p.record(ctx, "deadline")
-			return zero, fmt.Errorf("retry %s: gave up after %d attempts, context deadline before next attempt: %w",
-				p.name, attempt, errors.Join(err, context.DeadlineExceeded))
+			return zero, errors.Timeout.Wrap(fmt.Errorf("retry %s: gave up after %d attempts, context deadline before next attempt: %w",
+				p.name, attempt, errors.Join(err, context.DeadlineExceeded)), "")
 		}
 
 		p.record(ctx, "retry")
@@ -202,7 +204,10 @@ func DoValueWith[T any](ctx context.Context, p *Policy, op func(ctx context.Cont
 			p.onRetry(attempt, err, delay)
 		}
 		if waitErr := sleep(ctx, delay); waitErr != nil {
-			return zero, fmt.Errorf("retry %s: stopped after %d attempts: %w", p.name, attempt, errors.Join(err, waitErr))
+			// Classified by why the caller stopped (Canceled or Timeout), not
+			// by the last attempt's error.
+			return zero, errors.KindOf(waitErr).Wrap(fmt.Errorf("retry %s: stopped after %d attempts: %w",
+				p.name, attempt, errors.Join(err, waitErr)), "")
 		}
 	}
 }
