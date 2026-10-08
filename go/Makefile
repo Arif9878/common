@@ -1,7 +1,7 @@
 GOLANGCI_LINT_VERSION := v2.14.0
 GOVULNCHECK_VERSION   := v1.8.0
 
-.PHONY: check tidy vet lint test vuln
+.PHONY: check tidy vet lint test vuln test-kafka
 
 check: tidy vet lint test vuln
 
@@ -19,3 +19,10 @@ test:
 
 vuln:
 	go run golang.org/x/vuln/cmd/govulncheck@$(GOVULNCHECK_VERSION) ./...
+
+# Kafka tests against real brokers instead of the in-process fake, e.g.
+#   make test-kafka KAFKA_TEST_BROKERS=192.168.11.196:9092
+# Each test creates and deletes its own commontest-* topics and groups.
+test-kafka:
+	@test -n "$(KAFKA_TEST_BROKERS)" || { echo "set KAFKA_TEST_BROKERS=host:port[,host:port]"; exit 1; }
+	KAFKA_TEST_BROKERS=$(KAFKA_TEST_BROKERS) go test -race -count=1 -timeout 10m ./messaging/kafka/

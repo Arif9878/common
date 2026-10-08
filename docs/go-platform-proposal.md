@@ -363,8 +363,12 @@ timeout can no longer mark offsets. Batch handlers report partial progress with
 metrics; `kafka.consumer.records`, `.process.duration`, `.batch.size`, `.lag` (per partition),
 `.partitions.stopped`. Tests run on franz-go's in-process `kfake` cluster, with mutation
 checks for ordering, the concurrency cap, and not committing failed records.
-Not yet done: a real-broker CI job (tests use fixed topic names; they need per-test topic
-isolation first).
+Real brokers: with `KAFKA_TEST_BROKERS` set (`make test-kafka KAFKA_TEST_BROKERS=host:9092`) the
+same tests run against real brokers. Each test creates and deletes its own `commontest-*`
+topics and groups, so a shared broker is safe to use. CI runs them against a Redpanda
+container (`kafka` job). They also pass against the team's Redpanda at 192.168.11.196:9092,
+which GitHub-hosted runners cannot reach (it is a private LAN address; a self-hosted runner
+would be needed to test it in CI).
 
 ### coordination — ✅ implemented
 **idempotency**: `idempotency.Do[T](ctx, store, key, fn, opts...)` / `DoOutcome` (reports
@@ -546,7 +550,6 @@ manual wiring. A mutation check (telemetry not passed to the HTTP middleware) ma
   and the fakes landed with their packages (`secret.Static`, `featureflag.Static`,
   `idempotency.NewMemoryStore`, `idempotencytest`, `locktest`). Log-capture and metric-collection
   boilerplate is repeated across test files and would be worth extracting.
-- A real-broker CI job for Kafka (needs per-test topic isolation).
 - Module split of the heavy integrations before v1.0 (§2); `go/fx` is already separate.
 
 ## 13. Open questions for the team

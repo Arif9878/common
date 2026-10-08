@@ -60,3 +60,26 @@ jobs:
           cache-dependency-path: go/go.sum
       - run: make vuln
       - run: make -C fx vuln
+
+  kafka:
+    # The Kafka tests use an in-process fake by default; this job runs them
+    # against a real broker (Redpanda, single node) as well.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
+        with:
+          go-version: "1.27.x"
+          cache-dependency-path: go/go.sum
+      - name: Start Redpanda
+        run: |
+          docker run -d --name redpanda -p 9092:9092 redpandadata/redpanda:v26.2.4 \
+            redpanda start --mode dev-container --smp 1 \
+            --kafka-addr internal://0.0.0.0:9092 --advertise-kafka-addr internal://localhost:9092
+          for i in $(seq 1 60); do
+            docker exec redpanda rpk cluster health --exit-when-healthy --watch 2>/dev/null && exit 0
+            sleep 2
+          done
+          docker logs redpanda
+          exit 1
+      - run: make test-kafka KAFKA_TEST_BROKERS=localhost:9092

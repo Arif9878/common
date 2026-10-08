@@ -2,16 +2,20 @@ package kafka_test
 
 import (
 	"context"
+	"crypto/rand"
 	"fmt"
 	"io"
 	"log/slog"
+	"os"
 	"slices"
 	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/twmb/franz-go/pkg/kadm"
 	"github.com/twmb/franz-go/pkg/kfake"
 	"github.com/twmb/franz-go/pkg/kgo"
 	"go.opentelemetry.io/otel/propagation"
@@ -27,14 +31,116 @@ import (
 
 var quiet = kafka.WithLogger(slog.New(slog.NewTextHandler(io.Discard, nil)))
 
-func newCluster(t *testing.T, partitions int32, topics ...string) kafka.Config {
+// kafkaEnv is a Kafka cluster for one test: franz-go's in-process kfake by
+// default, or the real brokers in KAFKA_TEST_BROKERS (comma-separated).
+// Topic and group names are prefixed per test, so tests can share a real
+// broker; the test's topics and groups are deleted when it ends, and
+// nothing else on the broker is touched.
+type kafkaEnv struct {
+	cfg    kafka.Config
+	prefix string
+
+	mu     sync.Mutex
+	groups []string
+}
+
+// T returns the test's name for topic.
+func (k *kafkaEnv) T(topic string) string { return k.prefix + topic }
+
+// G returns the test's name for a consumer group and schedules its deletion.
+func (k *kafkaEnv) G(group string) string {
+	k.mu.Lock()
+	defer k.mu.Unlock()
+	name := k.prefix + group
+	if !slices.Contains(k.groups, name) {
+		k.groups = append(k.groups, name)
+	}
+	return name
+}
+
+func newKafka(t *testing.T, partitions int32, topics ...string) *kafkaEnv {
 	t.Helper()
-	c, err := kfake.NewCluster(kfake.NumBrokers(1), kfake.SeedTopics(partitions, topics...))
+	safe := strings.Map(func(r rune) rune {
+		if r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || r == '-' {
+			return r
+		}
+		return '-'
+	}, t.Name())
+	k := &kafkaEnv{prefix: "commontest-" + safe + "-" + strings.ToLower(rand.Text()[:6]) + "-"}
+	names := make([]string, len(topics))
+	for i, topic := range topics {
+		names[i] = k.T(topic)
+	}
+
+	brokers := os.Getenv("KAFKA_TEST_BROKERS")
+	if brokers == "" {
+		c, err := kfake.NewCluster(kfake.NumBrokers(1), kfake.SeedTopics(partitions, names...))
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(c.Close)
+		k.cfg = kafka.Config{Brokers: c.ListenAddrs()}
+		return k
+	}
+
+	k.cfg = kafka.Config{Brokers: strings.Split(brokers, ",")}
+	cl, err := kgo.NewClient(kgo.SeedBrokers(k.cfg.Brokers...))
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(c.Close)
-	return kafka.Config{Brokers: c.ListenAddrs()}
+	adm := kadm.NewClient(cl)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	created, err := adm.CreateTopics(ctx, partitions, -1, nil, names...)
+	if err != nil {
+		t.Fatalf("create topics: %v", err)
+	}
+	for _, r := range created.Sorted() {
+		if r.Err != nil {
+			t.Fatalf("create topic %s: %v", r.Topic, r.Err)
+		}
+	}
+	t.Cleanup(func() { // runs after the test's consumers are closed
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		k.mu.Lock()
+		groups := slices.Clone(k.groups)
+		k.mu.Unlock()
+		if len(groups) > 0 {
+			if _, err := adm.DeleteGroups(ctx, groups...); err != nil {
+				t.Logf("delete groups: %v", err)
+			}
+		}
+		if _, err := adm.DeleteTopics(ctx, names...); err != nil {
+			t.Logf("delete topics: %v", err)
+		}
+		cl.Close()
+	})
+	// Wait until every partition has a leader, so the first produce does
+	// not race topic creation.
+	for {
+		md, err := adm.Metadata(ctx, names...)
+		ready := err == nil
+		for _, name := range names {
+			td, ok := md.Topics[name]
+			if !ok || td.Err != nil || len(td.Partitions) != int(partitions) {
+				ready = false
+				break
+			}
+			for _, p := range td.Partitions {
+				if p.Leader < 0 || p.Err != nil {
+					ready = false
+				}
+			}
+		}
+		if ready {
+			return k
+		}
+		if ctx.Err() != nil {
+			t.Fatalf("topics %v not ready: %v", names, err)
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
 }
 
 func newProducer(t *testing.T, cfg kafka.Config, opts ...kafka.Option) *kafka.Producer {
@@ -112,16 +218,17 @@ func (c *collector) snapshot() []string {
 }
 
 func TestProduceConsumeOrderingAndCommit(t *testing.T) {
-	cfg := newCluster(t, 4, "orders")
+	k := newKafka(t, 4, "orders")
+	cfg := k.cfg
 	p := newProducer(t, cfg)
 	var kv []string
 	for i := range 200 {
 		kv = append(kv, "key-"+strconv.Itoa(i%10), fmt.Sprintf("%04d", i))
 	}
-	publish(t, p, "orders", kv...)
+	publish(t, p, k.T("orders"), kv...)
 
 	var got collector
-	c, err := kafka.NewConsumer(context.Background(), cfg, "billing", []string{"orders"},
+	c, err := kafka.NewConsumer(context.Background(), cfg, k.G("billing"), []string{k.T("orders")},
 		func(_ context.Context, r *kgo.Record) error { got.add(r); return nil }, quiet, kafka.WithConcurrency(4))
 	if err != nil {
 		t.Fatal(err)
@@ -144,13 +251,13 @@ func TestProduceConsumeOrderingAndCommit(t *testing.T) {
 
 	// Offsets were committed: the group sees nothing new.
 	var again collector
-	c2, err := kafka.NewConsumer(context.Background(), cfg, "billing", []string{"orders"},
+	c2, err := kafka.NewConsumer(context.Background(), cfg, k.G("billing"), []string{k.T("orders")},
 		func(_ context.Context, r *kgo.Record) error { again.add(r); return nil }, quiet)
 	if err != nil {
 		t.Fatal(err)
 	}
 	running(t, c2)
-	publish(t, p, "orders", "key-0", "9999")
+	publish(t, p, k.T("orders"), "key-0", "9999")
 	waitFor(t, "the new record", func() bool { return again.len() >= 1 })
 	if vals := again.snapshot(); len(vals) != 1 || vals[0] != "9999" {
 		t.Errorf("after restart got %v, want only the new record", vals)
@@ -158,11 +265,12 @@ func TestProduceConsumeOrderingAndCommit(t *testing.T) {
 }
 
 func TestRetryThenSuccess(t *testing.T) {
-	cfg := newCluster(t, 1, "t")
-	publish(t, newProducer(t, cfg), "t", "k", "v")
+	k := newKafka(t, 1, "t")
+	cfg := k.cfg
+	publish(t, newProducer(t, cfg), k.T("t"), "k", "v")
 	var attempts atomic.Int32
 	var done atomic.Bool
-	c, err := kafka.NewConsumer(context.Background(), cfg, "g", []string{"t"}, func(context.Context, *kgo.Record) error {
+	c, err := kafka.NewConsumer(context.Background(), cfg, k.G("g"), []string{k.T("t")}, func(context.Context, *kgo.Record) error {
 		if attempts.Add(1) < 3 {
 			return errors.Unavailable.New("db down")
 		}
@@ -179,11 +287,11 @@ func TestRetryThenSuccess(t *testing.T) {
 	}
 }
 
-func consumeAll(t *testing.T, cfg kafka.Config, topic string, n int) []*kgo.Record {
+func consumeAll(t *testing.T, k *kafkaEnv, topic string, n int) []*kgo.Record {
 	t.Helper()
 	var mu sync.Mutex
 	var out []*kgo.Record
-	c, err := kafka.NewConsumer(context.Background(), cfg, "reader-"+topic, []string{topic},
+	c, err := kafka.NewConsumer(context.Background(), k.cfg, k.G("reader-"+strings.TrimPrefix(topic, k.prefix)), []string{topic},
 		func(_ context.Context, r *kgo.Record) error {
 			mu.Lock()
 			defer mu.Unlock()
@@ -214,12 +322,13 @@ func header(r *kgo.Record, key string) string {
 }
 
 func TestPoisonToDLQ(t *testing.T) {
-	cfg := newCluster(t, 1, "events", "events.dlq")
+	k := newKafka(t, 1, "events", "events.dlq")
+	cfg := k.cfg
 	p := newProducer(t, cfg)
-	publish(t, p, "events", "a", "ok-1", "b", "poison", "c", "ok-2", "d", "panic")
+	publish(t, p, k.T("events"), "a", "ok-1", "b", "poison", "c", "ok-2", "d", "panic")
 
 	var got collector
-	c, err := kafka.NewConsumer(context.Background(), cfg, "g", []string{"events"}, func(_ context.Context, r *kgo.Record) error {
+	c, err := kafka.NewConsumer(context.Background(), cfg, k.G("g"), []string{k.T("events")}, func(_ context.Context, r *kgo.Record) error {
 		switch string(r.Value) {
 		case "poison":
 			return errors.InvalidArgument.New("unknown event type")
@@ -228,16 +337,16 @@ func TestPoisonToDLQ(t *testing.T) {
 		}
 		got.add(r)
 		return nil
-	}, quiet, kafka.WithDLQ(p, "events.dlq"))
+	}, quiet, kafka.WithDLQ(p, k.T("events.dlq")))
 	if err != nil {
 		t.Fatal(err)
 	}
 	running(t, c)
 
-	dlq := consumeAll(t, cfg, "events.dlq", 2)
+	dlq := consumeAll(t, k, k.T("events.dlq"), 2)
 	waitFor(t, "good records", func() bool { return got.len() == 2 })
 	if string(dlq[0].Value) != "poison" || header(dlq[0], "dlq.error.kind") != "invalid_argument" ||
-		header(dlq[0], "dlq.original.topic") != "events" || header(dlq[0], "dlq.original.offset") != "1" {
+		header(dlq[0], "dlq.original.topic") != k.T("events") || header(dlq[0], "dlq.original.offset") != "1" {
 		t.Errorf("dlq record = %s %v", dlq[0].Value, dlq[0].Headers)
 	}
 	if string(dlq[1].Value) != "panic" || header(dlq[1], "dlq.error.kind") != "internal" {
@@ -246,9 +355,10 @@ func TestPoisonToDLQ(t *testing.T) {
 }
 
 func TestFailureStopsPartitionByDefault(t *testing.T) {
-	cfg := newCluster(t, 1, "t")
+	k := newKafka(t, 1, "t")
+	cfg := k.cfg
 	p := newProducer(t, cfg)
-	publish(t, p, "t", "k", "0", "k", "poison", "k", "2", "k", "3")
+	publish(t, p, k.T("t"), "k", "0", "k", "poison", "k", "2", "k", "3")
 
 	reader := func(seen *collector) kafka.Handler {
 		return func(_ context.Context, r *kgo.Record) error {
@@ -261,7 +371,7 @@ func TestFailureStopsPartitionByDefault(t *testing.T) {
 	}
 	reader1 := &collector{}
 	reg := sdkmetric.NewManualReader()
-	c, err := kafka.NewConsumer(context.Background(), cfg, "g", []string{"t"}, reader(reader1), quiet,
+	c, err := kafka.NewConsumer(context.Background(), cfg, k.G("g"), []string{k.T("t")}, reader(reader1), quiet,
 		kafka.WithMeterProvider(sdkmetric.NewMeterProvider(sdkmetric.WithReader(reg))))
 	if err != nil {
 		t.Fatal(err)
@@ -283,7 +393,7 @@ func TestFailureStopsPartitionByDefault(t *testing.T) {
 
 	// Nothing after offset 0 was committed: the next consumer starts at the poison record.
 	reader2 := &collector{}
-	c2, err := kafka.NewConsumer(context.Background(), cfg, "g", []string{"t"}, reader(reader2), quiet)
+	c2, err := kafka.NewConsumer(context.Background(), cfg, k.G("g"), []string{k.T("t")}, reader(reader2), quiet)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -295,10 +405,11 @@ func TestFailureStopsPartitionByDefault(t *testing.T) {
 }
 
 func TestSkipOnFailure(t *testing.T) {
-	cfg := newCluster(t, 1, "t")
-	publish(t, newProducer(t, cfg), "t", "k", "1", "k", "poison", "k", "3")
+	k := newKafka(t, 1, "t")
+	cfg := k.cfg
+	publish(t, newProducer(t, cfg), k.T("t"), "k", "1", "k", "poison", "k", "3")
 	var got collector
-	c, err := kafka.NewConsumer(context.Background(), cfg, "g", []string{"t"}, func(_ context.Context, r *kgo.Record) error {
+	c, err := kafka.NewConsumer(context.Background(), cfg, k.G("g"), []string{k.T("t")}, func(_ context.Context, r *kgo.Record) error {
 		if string(r.Value) == "poison" {
 			return errors.InvalidArgument.New("bad")
 		}
@@ -313,7 +424,8 @@ func TestSkipOnFailure(t *testing.T) {
 }
 
 func TestBatchConsumerWithPartialFailure(t *testing.T) {
-	cfg := newCluster(t, 1, "t", "t.dlq")
+	k := newKafka(t, 1, "t", "t.dlq")
+	cfg := k.cfg
 	p := newProducer(t, cfg)
 	var kv []string
 	for i := range 25 {
@@ -323,12 +435,12 @@ func TestBatchConsumerWithPartialFailure(t *testing.T) {
 		}
 		kv = append(kv, "k", v)
 	}
-	publish(t, p, "t", kv...)
+	publish(t, p, k.T("t"), kv...)
 
 	var mu sync.Mutex
 	var sizes []int
 	var handled []string
-	c, err := kafka.NewBatchConsumer(context.Background(), cfg, "g", []string{"t"}, func(_ context.Context, rs []*kgo.Record) error {
+	c, err := kafka.NewBatchConsumer(context.Background(), cfg, k.G("g"), []string{k.T("t")}, func(_ context.Context, rs []*kgo.Record) error {
 		mu.Lock()
 		defer mu.Unlock()
 		sizes = append(sizes, len(rs))
@@ -339,14 +451,14 @@ func TestBatchConsumerWithPartialFailure(t *testing.T) {
 			handled = append(handled, string(r.Value))
 		}
 		return nil
-	}, quiet, kafka.WithBatchSize(10), kafka.WithBatchTimeout(200*time.Millisecond), kafka.WithDLQ(p, "t.dlq"))
+	}, quiet, kafka.WithBatchSize(10), kafka.WithBatchTimeout(200*time.Millisecond), kafka.WithDLQ(p, k.T("t.dlq")))
 	if err != nil {
 		t.Fatal(err)
 	}
 	running(t, c)
 
 	// Batch [10..19] processes 10–12, fails at 13; 13–19 go to the DLQ as a unit.
-	dlq := consumeAll(t, cfg, "t.dlq", 7)
+	dlq := consumeAll(t, k, k.T("t.dlq"), 7)
 	if string(dlq[0].Value) != "bad" || string(dlq[6].Value) != "19" {
 		t.Errorf("dlq = %s .. %s", dlq[0].Value, dlq[6].Value)
 	}
@@ -363,16 +475,17 @@ func TestBatchConsumerWithPartialFailure(t *testing.T) {
 }
 
 func TestConcurrencyLimit(t *testing.T) {
-	cfg := newCluster(t, 8, "t")
+	k := newKafka(t, 8, "t")
+	cfg := k.cfg
 	p := newProducer(t, cfg)
 	var kv []string
 	for i := range 64 {
 		kv = append(kv, strconv.Itoa(i), "v")
 	}
-	publish(t, p, "t", kv...)
+	publish(t, p, k.T("t"), kv...)
 
 	var active, peak, n atomic.Int32
-	c, err := kafka.NewConsumer(context.Background(), cfg, "g", []string{"t"}, func(context.Context, *kgo.Record) error {
+	c, err := kafka.NewConsumer(context.Background(), cfg, k.G("g"), []string{k.T("t")}, func(context.Context, *kgo.Record) error {
 		a := active.Add(1)
 		for p := peak.Load(); a > p && !peak.CompareAndSwap(p, a); p = peak.Load() {
 		}
@@ -392,19 +505,20 @@ func TestConcurrencyLimit(t *testing.T) {
 }
 
 func TestTracePropagation(t *testing.T) {
-	cfg := newCluster(t, 1, "t")
+	k := newKafka(t, 1, "t")
+	cfg := k.cfg
 	tp := sdktrace.NewTracerProvider()
 	prop := kafka.WithPropagators(propagation.TraceContext{})
 	p := newProducer(t, cfg, kafka.WithTracerProvider(tp), prop)
 
 	ctx, span := tp.Tracer("test").Start(context.Background(), "http request")
-	if err := p.Publish(ctx, &kgo.Record{Topic: "t", Value: []byte("v")}); err != nil {
+	if err := p.Publish(ctx, &kgo.Record{Topic: k.T("t"), Value: []byte("v")}); err != nil {
 		t.Fatal(err)
 	}
 	span.End()
 
 	got := make(chan trace.SpanContext, 1)
-	c, err := kafka.NewConsumer(context.Background(), cfg, "g", []string{"t"}, func(ctx context.Context, _ *kgo.Record) error {
+	c, err := kafka.NewConsumer(context.Background(), cfg, k.G("g"), []string{k.T("t")}, func(ctx context.Context, _ *kgo.Record) error {
 		got <- trace.SpanContextFromContext(ctx)
 		return nil
 	}, quiet, kafka.WithTracerProvider(tp), prop)
@@ -423,12 +537,13 @@ func TestTracePropagation(t *testing.T) {
 }
 
 func TestCloseWaitsForInFlight(t *testing.T) {
-	cfg := newCluster(t, 1, "t")
+	k := newKafka(t, 1, "t")
+	cfg := k.cfg
 	p := newProducer(t, cfg)
-	publish(t, p, "t", "k", "1")
+	publish(t, p, k.T("t"), "k", "1")
 
 	started, release := make(chan struct{}), make(chan struct{})
-	c, err := kafka.NewConsumer(context.Background(), cfg, "g", []string{"t"}, func(context.Context, *kgo.Record) error {
+	c, err := kafka.NewConsumer(context.Background(), cfg, k.G("g"), []string{k.T("t")}, func(context.Context, *kgo.Record) error {
 		close(started)
 		<-release
 		return nil
@@ -450,10 +565,10 @@ func TestCloseWaitsForInFlight(t *testing.T) {
 
 	// The in-flight record finished and was committed.
 	var again collector
-	c2, _ := kafka.NewConsumer(context.Background(), cfg, "g", []string{"t"},
+	c2, _ := kafka.NewConsumer(context.Background(), cfg, k.G("g"), []string{k.T("t")},
 		func(_ context.Context, r *kgo.Record) error { again.add(r); return nil }, quiet)
 	running(t, c2)
-	publish(t, p, "t", "k", "2")
+	publish(t, p, k.T("t"), "k", "2")
 	waitFor(t, "new record", func() bool { return again.len() >= 1 })
 	if vals := again.snapshot(); vals[0] != "2" {
 		t.Errorf("redelivered %v after a clean close", vals)
@@ -461,11 +576,12 @@ func TestCloseWaitsForInFlight(t *testing.T) {
 }
 
 func TestCloseDeadlineCancelsHandlers(t *testing.T) {
-	cfg := newCluster(t, 1, "t")
-	publish(t, newProducer(t, cfg), "t", "k", "1")
+	k := newKafka(t, 1, "t")
+	cfg := k.cfg
+	publish(t, newProducer(t, cfg), k.T("t"), "k", "1")
 	started := make(chan struct{})
 	var canceled atomic.Bool
-	c, err := kafka.NewConsumer(context.Background(), cfg, "g", []string{"t"}, func(ctx context.Context, _ *kgo.Record) error {
+	c, err := kafka.NewConsumer(context.Background(), cfg, k.G("g"), []string{k.T("t")}, func(ctx context.Context, _ *kgo.Record) error {
 		close(started)
 		<-ctx.Done()
 		canceled.Store(true)
@@ -488,7 +604,8 @@ func TestCloseDeadlineCancelsHandlers(t *testing.T) {
 }
 
 func TestRebalanceProcessesEverything(t *testing.T) {
-	cfg := newCluster(t, 6, "t")
+	k := newKafka(t, 6, "t")
+	cfg := k.cfg
 	p := newProducer(t, cfg)
 	var seen sync.Map
 	var total atomic.Int32
@@ -499,15 +616,15 @@ func TestRebalanceProcessesEverything(t *testing.T) {
 		time.Sleep(time.Millisecond)
 		return nil
 	}
-	c1, err := kafka.NewConsumer(context.Background(), cfg, "g", []string{"t"}, handler, quiet)
+	c1, err := kafka.NewConsumer(context.Background(), cfg, k.G("g"), []string{k.T("t")}, handler, quiet)
 	if err != nil {
 		t.Fatal(err)
 	}
 	running(t, c1)
 	for i := range 300 {
-		publish(t, p, "t", strconv.Itoa(i), strconv.Itoa(i))
+		publish(t, p, k.T("t"), strconv.Itoa(i), strconv.Itoa(i))
 		if i == 100 {
-			c2, err := kafka.NewConsumer(context.Background(), cfg, "g", []string{"t"}, handler, quiet)
+			c2, err := kafka.NewConsumer(context.Background(), cfg, k.G("g"), []string{k.T("t")}, handler, quiet)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -522,19 +639,20 @@ func TestTypedJSON(t *testing.T) {
 		ID    string `json:"id"`
 		Total int    `json:"total"`
 	}
-	cfg := newCluster(t, 1, "t")
+	k := newKafka(t, 1, "t")
+	cfg := k.cfg
 	p := newProducer(t, cfg)
-	r, err := kafka.Encode("t", []byte("o-1"), order{ID: "o-1", Total: 42}, kafka.JSON[order]{})
+	r, err := kafka.Encode(k.T("t"), []byte("o-1"), order{ID: "o-1", Total: 42}, kafka.JSON[order]{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := p.Publish(context.Background(), r, &kgo.Record{Topic: "t", Value: []byte("not json")}); err != nil {
+	if err := p.Publish(context.Background(), r, &kgo.Record{Topic: k.T("t"), Value: []byte("not json")}); err != nil {
 		t.Fatal(err)
 	}
 
 	got := make(chan order, 1)
 	failed := make(chan error, 1)
-	c, err := kafka.NewConsumer(context.Background(), cfg, "g", []string{"t"},
+	c, err := kafka.NewConsumer(context.Background(), cfg, k.G("g"), []string{k.T("t")},
 		kafka.Typed(kafka.JSON[order]{}, func(_ context.Context, _ *kgo.Record, o order) error {
 			got <- o
 			return nil
@@ -555,14 +673,15 @@ func TestTypedJSON(t *testing.T) {
 }
 
 func TestPublishAsyncAndClose(t *testing.T) {
-	cfg := newCluster(t, 1, "t")
+	k := newKafka(t, 1, "t")
+	cfg := k.cfg
 	p, err := kafka.NewProducer(context.Background(), cfg, quiet)
 	if err != nil {
 		t.Fatal(err)
 	}
 	var acked atomic.Int32
 	for i := range 100 {
-		p.PublishAsync(context.Background(), &kgo.Record{Topic: "t", Value: []byte(strconv.Itoa(i))},
+		p.PublishAsync(context.Background(), &kgo.Record{Topic: k.T("t"), Value: []byte(strconv.Itoa(i))},
 			func(_ *kgo.Record, err error) {
 				if err == nil {
 					acked.Add(1)
