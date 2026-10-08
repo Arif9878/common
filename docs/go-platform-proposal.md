@@ -245,35 +245,27 @@ remaining phases are skipped (also named); a second signal has the same effect.
 Health checks: probes share one run and cache it; at most one invocation per check in
 flight, so a hung check cannot leak goroutines; responses expose only the error kind.
 
-### secret / rotation / vault
+### secret / rotation — ✅ implemented; vault (step 10)
 ```go
-// secret
-type Secret struct{ value []byte; Version string; ExpiresAt time.Time; Renewable bool } // value unexported; String() redacts
-func (s Secret) Reveal() []byte
-type Provider interface { Get(ctx context.Context, key string) (Secret, error) }
+// secret: provider-neutral
+type Secret struct{ /* fields map, unexported */ Version string; ExpiresAt time.Time; LeaseID string }
+s.Field("password"); s.Require("username", "password"); s.TTL()  // every fmt verb/JSON/slog → redacted
+type Provider interface { Get(ctx, key string) (Secret, error) }  // + ProviderFunc, Static (tests/dev)
 
 // secret/rotation: knows nothing about Vault
-type Builder[R any] interface {
-    Fetch(ctx) (secret.Secret, error)
-    Build(ctx, secret.Secret) (R, error)
-    Validate(ctx, R) error
-    Drain(ctx, R) error     // wait for in-flight users
-    Close(ctx, R) error     // close / revoke
-}
-r, err := rotation.New[R](b, rotation.WithRefreshBefore(0.2) /* of TTL */, ...)
-res, release := r.Acquire()   // refcounted; release() lets old resources drain
-r.Current() R                 // for resources that self-drain (pgxpool)
-r.Rotate(ctx) error           // forced; serialized by a per-rotator mutex/singleflight
-r.Run(ctx) error              // background loop; register with graceful
+r, err := rotation.New(ctx, "orders-db", rotation.Spec[R]{Fetch, Build, Validate, Close}, opts...)
+//   first rotation synchronous (fail fast); then at 70%±5% of credential lifetime, or
+//   WithRefreshInterval for non-expiring secrets (unchanged Version = no-op)
+res, release, err := r.Acquire()  // refcounted; old resource closed after last release / drain timeout
+r.Current()                       // no refcount, for self-draining resources (pgxpool)
+r.Rotate(ctx)                     // forced; concurrent calls share one rotation
+r.Close(ctx)                      // graceful.Hook (CloseDeps)
 ```
-The swap uses `atomic.Pointer`. The old resource is drained in the background,
-bounded by `WithDrainTimeout`. If validation fails, the old resource is kept and
-the next attempt is scheduled with backoff from `retry`.
-
-`secret/vault`: `vault.New(cfg, auth, ...)` returns a `secret.Provider` and exposes
-`Client() *api.Client`. It uses Vault's `LifetimeWatcher` for token and lease renewal,
-and supports KV v2 plus dynamic `database/creds/*`. Errors are classified with
-`errors.Kind`. Error messages never include response bodies, because those can contain secret data.
+Swap is lock-free: `atomic.Pointer` plus a refcount with a "retired" bit, so `Acquire` can
+never take a use on a resource that is being drained (deterministic white-box test; a
+stress test alone could not catch the mutation). Failures keep the current resource and
+retry with 1s→1m jittered backoff indefinitely; logs escalate to ERROR once the credential
+in use has expired; `rotation.credential.ttl` gauge for alerting.
 
 ### transports
 **HTTP — ✅ implemented** (`transport/http/httpserver`, `httpclient`, `echoadapter`)
@@ -421,7 +413,7 @@ Each step is one PR, reviewable on its own.
 | 6 | ✅ `resilience/retry`, `circuitbreaker`, `ratelimit` | 1 |
 | 7 | ✅ `concurrency/workerpool`, `batch` | 1 |
 | 8 | ✅ `transport/http` (server + client), `echoadapter` | 2–7 |
-| 9 | `secret`, `secret/rotation` | 6 |
+| 9 | ✅ `secret`, `secret/rotation` | 6 |
 | 10 | `secret/vault` | 9 |
 | 11 | `datastore/postgres`, `datastore/redis` | 9 |
 | 12 | `transport/grpc` | 2–6 |
