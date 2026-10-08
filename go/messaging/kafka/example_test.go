@@ -37,7 +37,7 @@ func Example() {
 
 	shutdown.Go("kafka consumer", func() error { return consumer.Run(ctx) })
 	_ = shutdown.Register(graceful.StopIntake, "kafka consumer", consumer.Close) // stop polling, finish in-flight
-	_ = shutdown.Register(graceful.Drain, "kafka producer", producer.Close)     // flush after consumers stopped
+	_ = shutdown.Register(graceful.Drain, "kafka producer", producer.Close)      // flush after consumers stopped
 	if err := shutdown.Wait(ctx); err != nil {
 		log.Fatal(err)
 	}

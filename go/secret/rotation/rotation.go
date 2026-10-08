@@ -48,10 +48,12 @@
 //
 // [Rotator.Acquire] returns the current resource and a release function;
 // the old resource is closed only after every acquired use is released
-// (or WithDrainTimeout, 30s by default, passes). Resources that track
-// their own users, like pgxpool.Pool whose Close waits for acquired
-// connections, can use [Rotator.Current] instead, which skips the
-// reference count.
+// (or WithDrainTimeout, 30s by default, passes). [Rotator.Current] skips
+// the reference count. It suits resources whose Close waits for their own
+// users, like pgxpool.Pool, but only if the caller handles the window in
+// which it obtained the old resource just before it was closed: pgxpool
+// then fails the acquisition with a closed-pool error before any I/O, and
+// datastore/postgres retries it on the new pool.
 package rotation
 
 import (
@@ -291,8 +293,9 @@ func (r *Rotator[R]) Acquire() (R, func(), error) {
 }
 
 // Current returns the current resource without reference counting, for
-// resources whose Close waits for their own users. Do not keep it beyond
-// one operation.
+// resources whose Close waits for their own users. The resource may be
+// closed right after Current returns; see the package documentation. Do
+// not keep it beyond one operation.
 func (r *Rotator[R]) Current() R {
 	return r.cur.Load().res
 }

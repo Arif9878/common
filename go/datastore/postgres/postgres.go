@@ -54,6 +54,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/jackc/puddle/v2"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/metric"
@@ -305,7 +306,9 @@ func (db *DB) initMetrics() {
 }
 
 // Pool returns the current pool. Call it per operation; with rotation it
-// changes over time.
+// changes over time, and an operation started on a pool that is being
+// replaced fails with puddle.ErrClosedPool (before any I/O; retry it). The
+// DB methods retry automatically, so prefer them.
 func (db *DB) Pool() *pgxpool.Pool {
 	if db.rotator != nil {
 		return db.rotator.Current()
@@ -313,31 +316,101 @@ func (db *DB) Pool() *pgxpool.Pool {
 	return db.static
 }
 
+// withPool calls f with the current pool. With rotation, a caller can read
+// the pool just before it is replaced and closed; its acquisition then fails
+// with puddle.ErrClosedPool before any connection or I/O, so it is safe to
+// retry on the new pool.
+func withPool[T any](db *DB, f func(p *pgxpool.Pool) (T, error)) (T, error) {
+	for attempt := 0; ; attempt++ {
+		p := db.Pool()
+		v, err := f(p)
+		if err != nil && db.rotator != nil && attempt < 3 && errors.Is(err, puddle.ErrClosedPool) && db.Pool() != p {
+			continue
+		}
+		return v, err
+	}
+}
+
+// Acquire returns a connection from the current pool. Release it when done.
+func (db *DB) Acquire(ctx context.Context) (*pgxpool.Conn, error) {
+	return withPool(db, func(p *pgxpool.Pool) (*pgxpool.Conn, error) { return p.Acquire(ctx) })
+}
+
 // Exec runs sql on the current pool.
 func (db *DB) Exec(ctx context.Context, sql string, args ...any) (pgconn.CommandTag, error) {
-	return db.Pool().Exec(ctx, sql, args...)
+	return withPool(db, func(p *pgxpool.Pool) (pgconn.CommandTag, error) { return p.Exec(ctx, sql, args...) })
 }
 
 // Query runs sql on the current pool.
 func (db *DB) Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error) {
-	return db.Pool().Query(ctx, sql, args...)
+	return withPool(db, func(p *pgxpool.Pool) (pgx.Rows, error) { return p.Query(ctx, sql, args...) })
 }
 
-// QueryRow runs sql on the current pool.
+// QueryRow runs sql on the current pool. Errors are returned by Scan, as
+// with pgx.
 func (db *DB) QueryRow(ctx context.Context, sql string, args ...any) pgx.Row {
-	return db.Pool().QueryRow(ctx, sql, args...)
+	rows, err := db.Query(ctx, sql, args...)
+	return &row{rows: rows, err: err}
+}
+
+// row implements pgx.Row over Query, so that acquisition errors are
+// detected (and retried) up front rather than at Scan.
+type row struct {
+	rows pgx.Rows
+	err  error
+}
+
+func (r *row) Scan(dest ...any) error {
+	if r.err != nil {
+		return r.err
+	}
+	defer r.rows.Close()
+	if !r.rows.Next() {
+		if err := r.rows.Err(); err != nil {
+			return err
+		}
+		return pgx.ErrNoRows
+	}
+	if err := r.rows.Scan(dest...); err != nil {
+		return err
+	}
+	r.rows.Close()
+	return r.rows.Err()
 }
 
 // Begin starts a transaction on the current pool. The transaction keeps
 // its connection, and so its pool, until it ends.
 func (db *DB) Begin(ctx context.Context) (pgx.Tx, error) {
-	return db.Pool().Begin(ctx)
+	return withPool(db, func(p *pgxpool.Pool) (pgx.Tx, error) { return p.Begin(ctx) })
 }
 
-// SendBatch sends b on the current pool.
+// SendBatch sends b on a connection from the current pool, which is
+// released when the results are closed.
 func (db *DB) SendBatch(ctx context.Context, b *pgx.Batch) pgx.BatchResults {
-	return db.Pool().SendBatch(ctx, b)
+	conn, err := db.Acquire(ctx)
+	if err != nil {
+		return errBatch{err}
+	}
+	return &connBatch{BatchResults: conn.SendBatch(ctx, b), conn: conn}
 }
+
+type connBatch struct {
+	pgx.BatchResults
+	conn *pgxpool.Conn
+}
+
+func (b *connBatch) Close() error {
+	err := b.BatchResults.Close()
+	b.conn.Release()
+	return err
+}
+
+type errBatch struct{ err error }
+
+func (e errBatch) Exec() (pgconn.CommandTag, error) { return pgconn.CommandTag{}, e.err }
+func (e errBatch) Query() (pgx.Rows, error)         { return nil, e.err }
+func (e errBatch) QueryRow() pgx.Row                { return &row{err: e.err} }
+func (e errBatch) Close() error                     { return e.err }
 
 // Ping checks connectivity; it matches health.Check.
 func (db *DB) Ping(ctx context.Context) error {
