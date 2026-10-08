@@ -1,6 +1,7 @@
 package logging
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -25,6 +26,30 @@ type Config struct {
 	Service     string `env:"SERVICE"`
 	Environment string `env:"ENVIRONMENT"`
 	Version     string `env:"VERSION"`
+}
+
+// Validate reports whether cfg is valid. [New] calls it.
+func (cfg Config) Validate() error {
+	if _, err := cfg.level(); err != nil {
+		return err
+	}
+	switch strings.ToLower(cfg.Format) {
+	case "", "json", "text":
+		return nil
+	default:
+		return errors.New("invalid format (want json or text)")
+	}
+}
+
+func (cfg Config) level() (slog.Level, error) {
+	var level slog.Level
+	if cfg.Level == "" {
+		return level, nil
+	}
+	if err := level.UnmarshalText([]byte(cfg.Level)); err != nil {
+		return level, errors.New("invalid level (want debug, info, warn or error)")
+	}
+	return level, nil
 }
 
 // Option configures [New] and [NewHandler].
@@ -64,12 +89,10 @@ func New(cfg Config, opts ...Option) (*slog.Logger, error) {
 		opt(&o)
 	}
 
-	var level slog.Level
-	if cfg.Level != "" {
-		if err := level.UnmarshalText([]byte(cfg.Level)); err != nil {
-			return nil, fmt.Errorf("logging: invalid level %q", cfg.Level)
-		}
+	if err := cfg.Validate(); err != nil {
+		return nil, fmt.Errorf("logging: %w", err)
 	}
+	level, _ := cfg.level()
 	var leveler slog.Leveler = level
 	if o.levelVar != nil {
 		o.levelVar.Set(level)
@@ -78,13 +101,10 @@ func New(cfg Config, opts ...Option) (*slog.Logger, error) {
 
 	hopts := &slog.HandlerOptions{Level: leveler, AddSource: cfg.AddSource}
 	var base slog.Handler
-	switch strings.ToLower(cfg.Format) {
-	case "", "json":
-		base = slog.NewJSONHandler(o.writer, hopts)
-	case "text":
+	if strings.EqualFold(cfg.Format, "text") {
 		base = slog.NewTextHandler(o.writer, hopts)
-	default:
-		return nil, fmt.Errorf("logging: invalid format %q (want json or text)", cfg.Format)
+	} else {
+		base = slog.NewJSONHandler(o.writer, hopts)
 	}
 
 	var static []slog.Attr

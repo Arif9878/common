@@ -49,6 +49,7 @@ package metrics
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"sync"
@@ -82,6 +83,14 @@ type Config struct {
 	Service     string `env:"SERVICE"`
 	Environment string `env:"ENVIRONMENT"`
 	Version     string `env:"VERSION"`
+}
+
+// Validate reports whether cfg is valid. [Init] calls it.
+func (cfg Config) Validate() error {
+	if cfg.CardinalityLimit < 0 {
+		return errors.New("cardinality limit is negative")
+	}
+	return nil
 }
 
 // Option configures [Init].
@@ -123,12 +132,12 @@ type Provider struct {
 
 // Init creates a meter provider that exports to a Prometheus registry.
 func Init(ctx context.Context, cfg Config, opts ...Option) (*Provider, error) {
+	if err := cfg.Validate(); err != nil {
+		return nil, fmt.Errorf("metrics: %w", err)
+	}
 	var o options
 	for _, opt := range opts {
 		opt(&o)
-	}
-	if cfg.CardinalityLimit < 0 {
-		return nil, fmt.Errorf("metrics: cardinality limit %d is negative", cfg.CardinalityLimit)
 	}
 	limit := cfg.CardinalityLimit
 	if limit == 0 {

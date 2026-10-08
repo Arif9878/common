@@ -35,6 +35,7 @@ package tracing
 
 import (
 	"context"
+	stderrors "errors"
 	"fmt"
 	"strings"
 	"sync"
@@ -82,6 +83,21 @@ type Config struct {
 	Version     string `env:"VERSION"`
 }
 
+var errUnknownExporter = stderrors.New("unknown exporter (want none, otlp-grpc or otlp-http)")
+
+// Validate reports whether cfg is valid. [Init] calls it.
+func (cfg Config) Validate() error {
+	switch strings.ToLower(cfg.Exporter) {
+	case "", ExporterNone, ExporterOTLPGRPC, ExporterOTLPHTTP:
+	default:
+		return errUnknownExporter
+	}
+	if r := cfg.SampleRatio; r != nil && (*r < 0 || *r > 1) {
+		return stderrors.New("sample ratio outside [0, 1]")
+	}
+	return nil
+}
+
 // Option configures [Init].
 type Option func(*options)
 
@@ -113,6 +129,9 @@ type Provider struct {
 // Init creates a tracer provider from cfg. It returns an error for an
 // unknown exporter, a sample ratio outside [0, 1] or an invalid endpoint.
 func Init(ctx context.Context, cfg Config, opts ...Option) (*Provider, error) {
+	if err := cfg.Validate(); err != nil {
+		return nil, fmt.Errorf("tracing: %w", err)
+	}
 	var o options
 	for _, opt := range opts {
 		opt(&o)
@@ -125,9 +144,6 @@ func Init(ctx context.Context, cfg Config, opts ...Option) (*Provider, error) {
 	tpOpts := []sdktrace.TracerProviderOption{sdktrace.WithResource(res)}
 
 	if r := cfg.SampleRatio; r != nil {
-		if *r < 0 || *r > 1 {
-			return nil, fmt.Errorf("tracing: sample ratio %v outside [0, 1]", *r)
-		}
 		tpOpts = append(tpOpts, sdktrace.WithSampler(sdktrace.ParentBased(sdktrace.TraceIDRatioBased(*r))))
 	}
 
@@ -180,7 +196,7 @@ func newExporter(ctx context.Context, cfg Config) (sdktrace.SpanExporter, error)
 		}
 		return otlptracehttp.New(ctx, opts...)
 	default:
-		return nil, fmt.Errorf("unknown exporter %q (want none, otlp-grpc or otlp-http)", cfg.Exporter)
+		return nil, errUnknownExporter
 	}
 }
 

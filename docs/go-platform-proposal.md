@@ -156,16 +156,19 @@ retried nor reported as server errors.
 Mapping lives in the transports (`transport/http.StatusFor(err)`, `transport/grpc.StatusFor(err)`),
 not in `errors`, so `errors` stays dependency-free.
 
-### config
+### config — ✅ implemented
 ```go
-func Load[T any](opts ...Option) (T, error)   // env → defaults → validate; returns all errors joined
+func Load[T any](opts ...Option) (T, error)    // env → defaults → validate; every problem in one error
 func WithPrefix(p string) Option
-func WithLookup(func(string) (string, bool)) Option   // test injection, no os.Setenv
-type Secret string                              // String()/MarshalJSON/LogValue → "[REDACTED]"
-func Redacted[T any](cfg T) slog.Value          // safe startup log; also honours `secret:"true"` tag
+func WithEnvironment(map[string]string) Option // tests: no os.Setenv
+func Validate(cfg any) error                   // validate:"" tags, then Validate() methods, outermost first
+type Secret string                             // every fmt verb, JSON, text, slog → "[REDACTED]"; Reveal()
+func LogValue(cfg any) slog.Value              // startup log; structs → groups so key redaction applies
 ```
-Uses caarlos0/env v11 for parsing and go-playground/validator for rules. An optional
-`Validate() error` method on the config struct handles cross-field checks.
+Uses caarlos0/env v11 for parsing (`required`, `notEmpty`, `file` for mounted secrets,
+`envPrefix`) and go-playground/validator for rules. Errors never contain values: env parse
+errors are rewritten to name only the field and type. Platform `Config` types implement
+`Validate()`, so `Load` catches their mistakes at startup.
 
 ### observability
 ```go
@@ -381,7 +384,7 @@ Each step is one PR, reviewable on its own.
 | 1 | ✅ `errors` | 0 |
 | 2 | ✅ `observability/logging`, `requestid` | 1 |
 | 3 | ✅ `observability/tracing`, `observability/metrics` (legacy `logger`, `observability` marked Deprecated) | 2 |
-| 4 | `config` | 1 |
+| 4 | ✅ `config` | 1 |
 | 5 | `lifecycle/graceful`, `health` | 2 |
 | 6 | `resilience/retry`, `circuitbreaker`, `ratelimit` | 1 |
 | 7 | `concurrency/workerpool`, `batch` | 1 |
