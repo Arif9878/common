@@ -116,8 +116,12 @@ L2  ────┴──── resilience/{retry,circuitbreaker,ratelimit}  con
 L1  errors    config
 L0  stdlib · otel API (metric, trace) · log/slog
 
+observability/logging sits at L2: it depends only on slog, the otel trace API,
+requestid and errors, so any package may import it for field names, Err/Duration
+and ContextWithAttrs.
+
 Bootstrap only (imported by main(), never by the layers above):
-    observability/{logging,metrics,tracing}  →  otel SDK, exporters
+    observability/{metrics,tracing}  →  otel SDK, exporters
 ```
 
 Forbidden edges are enforced in CI (§8). Examples: `retry → kafka`, `batch → kafka`,
@@ -371,7 +375,7 @@ Each step is one PR, reviewable on its own.
 | 0 | ✅ `go 1.26`, dependency upgrade (clears 7 of 8 reachable vulns), CI (`.github/workflows/go.yml`), `go/Makefile`, `go/.golangci.yml` (legacy paths excluded, depguard rules) | — |
 | 0b | ✅ Legacy JWT middleware: `jwt` v3 → v5 (GO-2025-3553, no v3 fix) and signing key via parameter instead of `"secret"`, `APP_ENV=test` auth bypass removed | 0 |
 | 1 | ✅ `errors` | 0 |
-| 2 | `observability/logging`, `requestid` | 1 |
+| 2 | ✅ `observability/logging`, `requestid` | 1 |
 | 3 | `observability/tracing`, `observability/metrics` (replaces broken `observability`) | 2 |
 | 4 | `config` | 1 |
 | 5 | `lifecycle/graceful`, `health` | 2 |
