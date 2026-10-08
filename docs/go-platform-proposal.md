@@ -245,7 +245,7 @@ remaining phases are skipped (also named); a second signal has the same effect.
 Health checks: probes share one run and cache it; at most one invocation per check in
 flight, so a hung check cannot leak goroutines; responses expose only the error kind.
 
-### secret / rotation — ✅ implemented; vault (step 10)
+### secret / rotation / vault — ✅ implemented
 ```go
 // secret: provider-neutral
 type Secret struct{ /* fields map, unexported */ Version string; ExpiresAt time.Time; LeaseID string }
@@ -261,6 +261,14 @@ r.Current()                       // no refcount, for self-draining resources (p
 r.Rotate(ctx)                     // forced; concurrent calls share one rotation
 r.Close(ctx)                      // graceful.Hook (CloseDeps)
 ```
+`secret/vault` (hashicorp/vault/api): `vault.New(ctx, cfg, vault.WithAuth(m))` logs in up front
+(any `api.AuthMethod`, or a static token), renews with `LifetimeWatcher`, re-logs-in with
+jittered backoff when renewal ends. `Get` (implements `secret.Provider`) reads any path and
+unwraps KV v2 (fields, version; deleted → NotFound); dynamic secrets carry LeaseID/ExpiresAt.
+`Fetcher`/`Revoke` plug into rotation; `RenewLease`; `API()` escape hatch. Errors classified by
+status, never containing response bodies (raw proxy bodies are dropped). `Close` does not
+revoke the token, because that would revoke leases still draining.
+
 Swap is lock-free: `atomic.Pointer` plus a refcount with a "retired" bit, so `Acquire` can
 never take a use on a resource that is being drained (deterministic white-box test; a
 stress test alone could not catch the mutation). Failures keep the current resource and
@@ -414,7 +422,7 @@ Each step is one PR, reviewable on its own.
 | 7 | ✅ `concurrency/workerpool`, `batch` | 1 |
 | 8 | ✅ `transport/http` (server + client), `echoadapter` | 2–7 |
 | 9 | ✅ `secret`, `secret/rotation` | 6 |
-| 10 | `secret/vault` | 9 |
+| 10 | ✅ `secret/vault` | 9 |
 | 11 | `datastore/postgres`, `datastore/redis` | 9 |
 | 12 | `transport/grpc` | 2–6 |
 | 13 | `messaging/kafka` | 6, 7 |
