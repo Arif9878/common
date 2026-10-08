@@ -58,6 +58,13 @@ packages next to it, and remove the old ones after services migrate (§9).
 
 ## 2. Module layout
 
+> **Update (2026-10-08): `go/fx` is a separate module** (`github.com/Arif9878/common/go/fx`,
+> package `commonfx`), so fx, dig and zap stay out of services that do not use fx. Local
+> development and CI build it against the core in this repository through a `replace` to `../`
+> in `go/fx/go.mod`, which consumers ignore (no `go.work` needed; the repository's `.gitignore`
+> excludes it). **Release step:** tag the core (`go/vX.Y.Z`) first, set the core
+> `require` in `go/fx/go.mod` to that tag, then tag `go/fx/vX.Y.Z`.
+>
 > **Decision (2026-10-08): single module until v1.0.** The layout below is the
 > v1.0 target. Package paths are chosen so the split does not change any import path.
 > Until the split, `depguard` keeps the core packages from importing the heavy integrations.
@@ -499,6 +506,40 @@ resilience before any infrastructure module exists.
 | Health, graceful, idempotency, lock | **Build** (small, and their semantics are ours to define) |
 | Test assertions | **Adopt** `stretchr/testify` or stdlib. `testkit` holds only the clock, fakes and log capture |
 
+### fx integration — ✅ implemented (`go/fx`, separate module)
+```go
+fx.New(
+    commonfx.Config[AppConfig](), commonfx.ConfigFields[AppConfig](), // fields as their own types
+    commonfx.Observability(), commonfx.Lifecycle(),
+    commonfx.AdminServer(), commonfx.HTTPServer(), commonfx.GRPCServer(),
+    commonfx.Postgres(), commonfx.Redis(), commonfx.Vault(),
+    commonfx.KafkaProducer(), commonfx.KafkaConsumer("billing", topics, NewBillingHandler),
+    commonfx.GRPCClient("inventory"), commonfx.HTTPClient("payments", httpclient.WithRetry()),
+    fx.Provide(...), commonfx.Ready(),                               // Ready always last
+    fx.StopTimeout(45*time.Second),
+).Run()
+```
+fx handles signals and construction; shutdown order stays with `graceful` phases, because fx's
+reverse-dependency order cannot express "stop intake everywhere before draining" across
+unrelated components. `Ready()` must be last: its OnStart marks the service ready after every
+other start, and its OnStop runs the graceful phases before every other fx stop hook (fx's
+start loop does not run hooks appended during start, so this cannot be automated). `Lifecycle`
+fails app start if `Ready` is missing. Each module calls the core constructor, registers its
+stop function in the right phase and adds readiness checks. Options that depend on the graph
+(for example Vault-backed credential rotation) are contributed through value groups
+(`commonfx.PostgresOptions`, ...). The admin server (probes, `/metrics`) stops in the last
+phase so readiness keeps answering 503 during the drain.
+
+Telemetry is wired automatically and explicitly: `Observability()` puts the logger, tracer
+provider, meter provider and propagator in the graph, and every module passes them to the
+package it builds. Nothing depends on OpenTelemetry globals or on option order. `HTTPServer`
+applies the standard middleware itself (`HTTPHandlerAsIs()` for Echo apps that already use
+echoadapter). Named clients (`GRPCClient`, `HTTPClient`, configured from `GRPCClientConfig` /
+`httpclient.Config` with the same name tag) are closed in CloseDeps. `KafkaConsumer` builds the
+consumer with telemetry from a handler constructor. An end-to-end test checks one trace across
+HTTP client → HTTP server → gRPC client → gRPC server, and access logs for both servers, with no
+manual wiring. A mutation check (telemetry not passed to the HTTP middleware) makes it fail.
+
 ## 12. Not yet done
 
 - `testkit` (spec §25: test logger, metric helpers). The planned clock became `testing/synctest`,
@@ -506,7 +547,7 @@ resilience before any infrastructure module exists.
   `idempotency.NewMemoryStore`, `idempotencytest`, `locktest`). Log-capture and metric-collection
   boilerplate is repeated across test files and would be worth extracting.
 - A real-broker CI job for Kafka (needs per-test topic isolation).
-- Module split before v1.0 (§2).
+- Module split of the heavy integrations before v1.0 (§2); `go/fx` is already separate.
 
 ## 13. Open questions for the team
 

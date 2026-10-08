@@ -37,6 +37,7 @@ jobs:
           go-version: ${{ matrix.go }}
           cache-dependency-path: go/go.sum
       - run: make tidy vet test
+      - run: make -C fx tidy vet test
 
   lint:
     runs-on: ubuntu-latest
@@ -47,6 +48,7 @@ jobs:
           go-version: "1.27.x"
           cache-dependency-path: go/go.sum
       - run: make lint
+      - run: make -C fx lint
 
   vuln:
     runs-on: ubuntu-latest
@@ -57,3 +59,4 @@ jobs:
           go-version: "1.27.x"
           cache-dependency-path: go/go.sum
       - run: make vuln
+      - run: make -C fx vuln
