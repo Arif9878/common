@@ -359,20 +359,27 @@ checks for ordering, the concurrency cap, and not committing failed records.
 Not yet done: a real-broker CI job (tests use fixed topic names; they need per-test topic
 isolation first).
 
-### coordination
-- **idempotency**: `Do[T](ctx, store, key, fn, opts...)`.
-  `Store` interface: `Begin(key, ttl) (State, error)`, `Complete(key, result)`, `Fail(key)`.
-  States are `InProgress`, `Completed` and `Failed`. **Documented guarantee: at-most-once start
-  per key within the TTL, not exactly-once.** A crash between the side effect and `Complete`
-  leaves an expired in-progress record, so the operation must be safe to re-run or must commit
-  in the same transaction as the store. The Postgres store supports that same-transaction case.
-- **lock**: `Locker.Acquire(ctx, key, ttl) (Lease, error)`. A `Lease` carries `Token` (owner)
-  and `Fence uint64`. The Postgres implementation (advisory lock plus a sequence for fencing)
-  is recommended for correctness. The Redis implementation is documented as best-effort
-  (efficiency only, not safety), following Kleppmann's critique of Redlock.
-- **featureflag**: adopt **OpenFeature** (`github.com/open-feature/go-sdk`). It already is the
-  vendor-neutral evaluator abstraction, and Flipt ships a provider. We add a small
-  `Evaluator` interface for consumers, plus metrics and tracing hooks and a documented fail-mode per call (`featureflag.FailOpen` / `FailClosed`).
+### coordination — ✅ implemented
+**idempotency**: `idempotency.Do[T](ctx, store, key, fn, opts...)` / `DoOutcome` (reports
+`Duplicate`). Claim with lease (5m) → run → store result (24h) / release on failure; in-progress
+elsewhere → `ErrInProgress` (Unavailable, retried by Kafka consumers). Ownership tokens make a
+stale owner's completion fail (`ErrLeaseLost`). Stores: `NewMemoryStore`, `pgstore` (with
+`DoTx`: claim, side effects and completion in one transaction: exactly once for writes in that
+database, tested with 10 concurrent calls → one row), `redisstore` (Lua). Documented limits:
+not exactly-once across a crash between side effect and completion, or past the lease or TTL.
+Shared conformance suite `idempotencytest`.
+
+**lock**: `lock.Acquire(ctx, locker, key, ttl)` (polls with jittered backoff), `Lease` with
+`Release`, `Extend`, `Fence`. `pglock` (DB clock, global fence sequence) and `redislock`
+(single node, per-key fence; explicitly not Redlock). The docs cover process pauses,
+partitions, clocks and fencing. Shared conformance suite `locktest`, including a
+20-goroutine mutual-exclusion check.
+
+**featureflag**: `Evaluator` (`Bool`/`String`/`Int` returning the default plus a classified
+error) backed by OpenFeature (`NewOpenFeature`), so Flipt and other providers plug in without
+a dependency here; `Static` for tests. Fail-open versus fail-closed is the per-call default
+and is documented. `featureflag.evaluations` metric and `feature_flag.evaluation` span events,
+never attribute values.
 
 ---
 
@@ -450,7 +457,7 @@ Each step is one PR, reviewable on its own.
 | 11 | ✅ `datastore/postgres`, `datastore/redis` | 9 |
 | 12 | ✅ `transport/grpc` | 2–6 |
 | 13 | ✅ `messaging/kafka` | 6, 7 |
-| 14 | `idempotency` (+ pg/redis stores), `lock`, `featureflag` | 11 |
+| 14 | ✅ `idempotency` (+ pg/redis stores), `lock`, `featureflag` | 11 |
 
 Steps 1–7 alone are enough for a service to adopt logging, config, shutdown and
 resilience before any infrastructure module exists.
@@ -492,7 +499,16 @@ resilience before any infrastructure module exists.
 | Health, graceful, idempotency, lock | **Build** (small, and their semantics are ours to define) |
 | Test assertions | **Adopt** `stretchr/testify` or stdlib. `testkit` holds only the clock, fakes and log capture |
 
-## 12. Open questions for the team
+## 12. Not yet done
+
+- `testkit` (spec §25: test logger, metric helpers). The planned clock became `testing/synctest`,
+  and the fakes landed with their packages (`secret.Static`, `featureflag.Static`,
+  `idempotency.NewMemoryStore`, `idempotencytest`, `locktest`). Log-capture and metric-collection
+  boilerplate is repeated across test files and would be worth extracting.
+- A real-broker CI job for Kafka (needs per-test topic isolation).
+- Module split before v1.0 (§2).
+
+## 13. Open questions for the team
 
 1. ~~Multi-module now, or single module until v1 (§2)?~~ Single module.
 2. ~~Prometheus pull (`/metrics`) or OTLP push as the default metrics exporter?~~ Prometheus pull.
