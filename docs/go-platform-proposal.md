@@ -1,0 +1,427 @@
+# Go Platform Library — Architecture Proposal
+
+Status: **Draft for review**. This is a proposal, not an implementation. Nothing below
+is implemented yet; the existing packages under `go/` are unchanged.
+
+---
+
+## 0. Where we are today
+
+`github.com/Arif9878/common/go` currently contains:
+
+| Package | Problems that block reuse in high-traffic services |
+|---|---|
+| `logger` | logrus + a 15-method interface + a mutable global `Logger`. `ILogger` has an unexported method (`getLevel`) while `AppLogger` defines `GetLevel`, so no type, `AppLogger` included, can satisfy it from outside the package. |
+| `observability` | `New` calls `WithOTLPExporter(ctx)` but throws the returned option away, so the exporter is never set. `Start` never creates a span (it re-wraps the parent). `Shutdown` swallows the error. Misconfiguration `panic`s. |
+| `http/echo/middleware` | **JWT verified with the hard-coded key `"secret"`**. Auth is skipped when `APP_ENV=test`. Request ID stored under a string context key. Uses `satori/go.uuid` (unmaintained). |
+| `http/echo/server` | Shutdown uses the already-cancelled context, so in-flight requests are cut off rather than drained. No readiness flip. |
+| `http/context.go` | Spawns a goroutine that does nothing useful. |
+| `constant`, `observability` | `DatastoreMySQL/DatastorePostgres` defined twice. |
+| `utils` | `lib/pq` null helpers. Fine, but `lib/pq` is in maintenance mode. |
+
+Toolchain: `go.mod` says `go 1.21.0`; the local toolchain is 1.27.
+
+**Recommendation:** treat the current code as `v0` legacy. Freeze it, build the new
+packages next to it, and remove the old ones after services migrate (§9).
+
+---
+
+## 1. Guiding decisions
+
+1. **Primitives depend on stable APIs, not on our observability packages.**
+   Every package that emits telemetry takes `*slog.Logger`, `metric.MeterProvider`
+   and `trace.TracerProvider` as options. The defaults are the global or no-op
+   providers. That is the OpenTelemetry guidance for libraries. `retry` and
+   `workerpool` therefore depend only on the stdlib and `go.opentelemetry.io/otel/{metric,trace}`
+   (API only, no SDK). Our `observability/*` packages exist to **bootstrap** the
+   SDK in `main()` and to define naming conventions. They are not a runtime
+   dependency of other packages.
+2. **Standardize on `log/slog`.** No custom logger interface. Consumers accept `*slog.Logger`.
+3. **OTel API for metrics and traces. The exporter is a deployment choice.** Use the
+   OTel metrics API everywhere. `observability/metrics` wires either the Prometheus
+   exporter (pull, `/metrics`) or OTLP (push). Services do not import `client_golang` directly.
+4. **Framework-agnostic transports.** HTTP middleware is `func(http.Handler) http.Handler`.
+   Echo, chi and Gin adapt it in one line (`echo.WrapMiddleware`). A thin
+   `transport/http/echoadapter` exists only for migration.
+5. **Functional options and typed `Config` structs.** `New(cfg Config, opts ...Option)`.
+   `Config` holds what the environment sets; `Option` holds code-level wiring such as
+   the logger, providers, clock and hooks. No package-level mutable state.
+6. **Everything bounded.** Every queue, retry loop, batch and goroutine set has a cap,
+   with a non-zero default. "Unlimited" is never a default and is never representable by the zero value.
+7. **No clock abstraction. Tests use `testing/synctest`** (stable since Go 1.25).
+   Inside a `synctest.Test` bubble, `time.Now`, timers and tickers run on a fake clock
+   that advances once every goroutine in the bubble is blocked. Tests are deterministic and instant,
+   even for code we don't own (gobreaker, `x/time/rate`), so packages call the `time`
+   package directly and expose no `Clock` option.
+
+---
+
+## 2. Module layout
+
+> **Decision (2026-10-08): single module until v1.0.** The layout below is the
+> v1.0 target. Package paths are chosen so the split does not change any import path.
+> Until the split, `depguard` keeps the core packages from importing the heavy integrations.
+
+A single module would make a service that needs only `retry` resolve franz-go,
+the Vault SDK, pgx and gRPC versions through MVS. That couples upgrade cycles
+across the company. Use one **core module** with light dependencies plus
+**separate modules** for heavy integrations:
+
+```text
+go/                          module github.com/Arif9878/common/go        (core)
+├── errors/                  stdlib only
+├── config/                  caarlos0/env, go-playground/validator
+├── lifecycle/graceful/
+├── health/
+├── resilience/{retry,circuitbreaker,ratelimit}
+├── concurrency/{workerpool,batch}
+├── idempotency/             core + in-memory store
+├── lock/                    interface + docs only
+├── featureflag/             interface (OpenFeature-backed)
+├── secret/                  SecretProvider interface + Secret type
+├── secret/rotation/
+├── requestid/               request/correlation ID context plumbing (see §6)
+├── observability/{logging,metrics,tracing}   OTel SDK + exporters
+├── transport/http/          net/http + otelhttp
+└── testkit/                 (renamed from testing/, see §6)
+
+go/transport/grpc/           separate module (google.golang.org/grpc, go-grpc-middleware/v2)
+go/messaging/kafka/          separate module (twmb/franz-go)
+go/datastore/postgres/       separate module (jackc/pgx/v5)
+go/datastore/redis/          separate module (redis/go-redis/v9)
+go/secret/vault/             separate module (hashicorp/vault/api)
+go/featureflag/flipt/        separate module (OpenFeature Flipt provider)
+go/idempotency/{pgstore,redisstore}, go/lock/{pglock,redislock}  separate modules
+```
+
+Cost: more release tags (`go/messaging/kafka/v0.3.0`) and a `go.work` file for
+local development. Use `go.work` in the repo and release-please or a tag script in CI.
+If the team does not want multi-module releases yet, start as one module and split
+before v1. The package paths stay the same either way, so splitting later does not break importers.
+
+---
+
+## 3. Dependency graph
+
+Arrows mean "imports". Lower layers never import higher ones.
+
+```text
+L4  messaging/kafka   datastore/postgres   datastore/redis   transport/grpc   secret/vault
+        │   │               │   │                │                 │              │
+        │   └───────┐       │   └──────┐         │                 │              │
+L3      │      transport/http│   secret/rotation  idempotency/*store  lock/*impl   │
+        │            │       │         │                                          │
+L2  ────┴──── resilience/{retry,circuitbreaker,ratelimit}  concurrency/{workerpool,batch}
+        │            health   lifecycle/graceful   featureflag   requestid   secret
+L1  errors    config
+L0  stdlib · otel API (metric, trace) · log/slog
+
+Bootstrap only (imported by main(), never by the layers above):
+    observability/{logging,metrics,tracing}  →  otel SDK, exporters
+```
+
+Forbidden edges are enforced in CI (§8). Examples: `retry → kafka`, `batch → kafka`,
+`rotation → vault`, `observability → anything above L1`, any production package `→ testkit`.
+
+---
+
+## 4. Public API sketch (per package)
+
+These signatures are for review, not final.
+
+### errors (classification, not catalogue)
+```go
+type Kind uint8
+const ( KindUnknown Kind = iota; InvalidArgument; NotFound; Conflict; Unauthenticated
+        PermissionDenied; Timeout; Unavailable; RateLimited; Internal )
+
+func New(kind Kind, msg string) error
+func Wrap(err error, kind Kind, msg string) error   // keeps err for Is/As/Unwrap
+func KindOf(err error) Kind                         // walks the chain; ctx errors → Timeout/Unavailable
+func IsRetryable(err error) bool                    // Timeout, Unavailable, RateLimited
+func WithSafeMessage(err error, msg string) error   // message that may be returned to clients
+// Re-exports Is, As, Unwrap, Join so importing this package does not shadow stdlib.
+```
+Mapping lives in the transports (`transport/http.StatusFor(err)`, `transport/grpc.StatusFor(err)`),
+not in `errors`, so `errors` stays dependency-free.
+
+### config
+```go
+func Load[T any](opts ...Option) (T, error)   // env → defaults → validate; returns all errors joined
+func WithPrefix(p string) Option
+func WithLookup(func(string) (string, bool)) Option   // test injection, no os.Setenv
+type Secret string                              // String()/MarshalJSON/LogValue → "[REDACTED]"
+func Redacted[T any](cfg T) slog.Value          // safe startup log; also honours `secret:"true"` tag
+```
+Uses caarlos0/env v11 for parsing and go-playground/validator for rules. An optional
+`Validate() error` method on the config struct handles cross-field checks.
+
+### observability
+```go
+// tracing
+func Init(ctx, Config, ...Option) (shutdown func(context.Context) error, err error)
+// metrics
+func Init(ctx, Config, ...Option) (mp metric.MeterProvider, handler http.Handler, shutdown func(context.Context) error, err error)
+// logging
+func New(Config, ...Option) *slog.Logger         // JSON in prod, redaction, trace/span/request IDs from ctx
+const ( KeyService="service"; KeyTraceID="trace_id"; KeyRequestID="request_id"; KeyDurationMS="duration_ms"; … )
+```
+Logging wraps the `slog.Handler` once to (a) add `trace_id`, `span_id` and
+`request_id` from the context and (b) redact keys on a deny-list such as
+`password`, `token`, `authorization` and `secret`. That costs one handler wrapper and nothing per call site.
+
+### resilience
+```go
+retry.Do(ctx, op func(ctx) error, ...Option) error
+retry.DoValue[T](ctx, op func(ctx) (T, error), ...Option) (T, error)
+//   defaults: 3 attempts, 100ms→2s exp backoff, full jitter, MaxElapsed 30s, predicate = errors.IsRetryable
+//   errors carry attempt count; retry.Permanent(err) short-circuits
+
+cb := circuitbreaker.New(name, ...Option)        // wraps sony/gobreaker/v2
+circuitbreaker.Execute[T](ctx, cb, op) (T, error) // returns ErrOpen (Kind Unavailable) when open
+
+rl := ratelimit.NewLocal(rate, burst, ...Option) // wraps golang.org/x/time/rate
+rl.Allow() bool; rl.Wait(ctx) error               // Wait bounded by WithMaxWait
+type Limiter interface { Allow(ctx, key string) (bool, error) } // distributed impls live in redis module
+```
+Composition is explicit, for example `retry.Do(ctx, func(ctx) error { return cb.Execute(ctx, call) })`.
+
+### concurrency
+```go
+pool := workerpool.New(workerpool.WithWorkers(20), workerpool.WithQueueSize(1000))
+pool.Submit(ctx, task) error     // blocks until queue space or ctx done (backpressure)
+pool.TrySubmit(task) error       // ErrQueueFull immediately
+pool.Shutdown(ctx) error         // stop intake, drain, give up at ctx deadline
+
+p := batch.New[T](handler, batch.WithSize(500), batch.WithFlushInterval(time.Second))
+p.Add(ctx, item) error           // blocks when the pending buffer is full (bounded memory)
+p.Flush(ctx) error; p.Close(ctx) error
+type Handler[T any] func(ctx context.Context, items []T) error
+// Partial failure: handler may return batch.PartialError{Failed: []int{...}}; failed items
+// go to an OnFailure hook. They are NOT re-queued automatically (no unbounded growth).
+```
+
+### lifecycle / health
+```go
+g := graceful.New(graceful.WithTimeout(30*time.Second), graceful.WithSignals(syscall.SIGTERM, os.Interrupt))
+g.Add(phase graceful.Phase, name string, stop func(context.Context) error)
+// Phases run in order: Unready → StopIntake → Drain → FlushTelemetry → CloseDeps
+g.Wait() error    // blocks for signal or Shutdown(); runs phases once; errors.Join of all failures
+
+h := health.New(health.WithMaxConcurrency(4))
+h.AddReadiness("postgres", check, health.WithTimeout(time.Second), health.Critical())
+h.LiveHandler(), h.ReadyHandler()   // live never runs dependency checks
+h.SetReady(false)                   // flipped by graceful's Unready phase
+```
+
+### secret / rotation / vault
+```go
+// secret
+type Secret struct{ value []byte; Version string; ExpiresAt time.Time; Renewable bool } // value unexported; String() redacts
+func (s Secret) Reveal() []byte
+type Provider interface { Get(ctx context.Context, key string) (Secret, error) }
+
+// secret/rotation: knows nothing about Vault
+type Builder[R any] interface {
+    Fetch(ctx) (secret.Secret, error)
+    Build(ctx, secret.Secret) (R, error)
+    Validate(ctx, R) error
+    Drain(ctx, R) error     // wait for in-flight users
+    Close(ctx, R) error     // close / revoke
+}
+r, err := rotation.New[R](b, rotation.WithRefreshBefore(0.2) /* of TTL */, ...)
+res, release := r.Acquire()   // refcounted; release() lets old resources drain
+r.Current() R                 // for resources that self-drain (pgxpool)
+r.Rotate(ctx) error           // forced; serialized by a per-rotator mutex/singleflight
+r.Run(ctx) error              // background loop; register with graceful
+```
+The swap uses `atomic.Pointer`. The old resource is drained in the background,
+bounded by `WithDrainTimeout`. If validation fails, the old resource is kept and
+the next attempt is scheduled with backoff from `retry`.
+
+`secret/vault`: `vault.New(cfg, auth, ...)` returns a `secret.Provider` and exposes
+`Client() *api.Client`. It uses Vault's `LifetimeWatcher` for token and lease renewal,
+and supports KV v2 plus dynamic `database/creds/*`. Errors are classified with
+`errors.Kind`. Error messages never include response bodies, because those can contain secret data.
+
+### transports
+- **http server**: middleware `Recover`, `RequestID`, `Logging`, `Metrics`, `Tracing` (otelhttp),
+  `Timeout`, `MaxBytes`, `Auth(Authenticator)`. `Chain(...)` applies them in the documented order.
+  `server.Run(ctx, *http.Server, g *graceful.Group)`.
+- **http client**: `NewClient(cfg, ...Option) *http.Client`, built on a tuned `*http.Transport`
+  wrapped by `RoundTripper` middleware (tracing → metrics → requestid → circuit breaker → retry).
+  Retries only for idempotent methods, or when the request carries an `Idempotency-Key`,
+  and only if the body is rewindable (`GetBody != nil`).
+- **grpc**: `grpcserver.New(opts...) *grpc.Server` returns the native server; nothing is hidden.
+  Interceptors come from go-grpc-middleware v2 (recovery, logging, auth, selector) plus
+  otelgrpc stats handlers. `grpcclient.Dial(target, opts...) (*grpc.ClientConn, error)`
+  uses gRPC's native service-config retry policy rather than a custom loop.
+
+### datastore
+- **postgres**: `postgres.New(ctx, cfg, opts...) (*DB, error)`, built on pgxpool.
+  `db.Pool() *pgxpool.Pool` is fetched per call, so do not cache it. Rotation is integrated
+  through `rotation.Rotator[*pgxpool.Pool]`. `pgxpool.Close` already waits for acquired
+  connections, which gives draining for free. Tracing uses `otelpgx` and metrics come from `pool.Stat()`.
+  Static (non-lease) passwords can use the lighter `BeforeConnect` hook instead of a pool swap.
+- **redis**: `redis.New(ctx, cfg, opts...) (redis.UniversalClient, error)`, which covers single,
+  cluster and sentinel. Credential rotation uses go-redis's `CredentialsProviderContext`, so
+  new connections pick up new credentials without swapping the client. Tracing and metrics use `redisotel`.
+
+### messaging/kafka (franz-go)
+```go
+c, _ := kafka.NewConsumer(cfg, kafka.HandleBatch(h), kafka.WithConcurrency(8), kafka.WithDLQ(producer, "x.dlq"))
+type Handler      func(ctx, *kgo.Record) error
+type BatchHandler func(ctx, []*kgo.Record) error   // per-partition batch
+```
+- **Delivery**: at-least-once. Offsets are committed only after the handler succeeds, or
+  after a record is sent to the DLQ, using `kgo.DisableAutoCommit` and marked-offset commits.
+- **Ordering**: preserved per partition. Each partition is handled by at most one worker at a
+  time, and concurrency is across partitions. Optional key-hash sub-partitioning gives
+  per-key ordering with more parallelism.
+- **Backpressure**: polling pauses (`PauseFetchPartitions`) when a partition's in-flight buffer is full.
+- **Rebalance**: on revoke, stop dispatching, wait up to `RevokeTimeout` for in-flight work,
+  commit what is done, then release. A record whose work was cut off is redelivered.
+- **Partial batch failure**: the commit advances only to the last contiguous success. Later
+  records in that batch are retried (and may be redelivered); this is documented.
+- **Retry**: bounded in-process retry for retryable kinds, then the DLQ (if configured) or
+  stopping that partition. Partitions are never skipped silently.
+- Producer: `Produce(ctx, topic, key, value)` (sync) and `ProduceAsync(..., cb)`, with a
+  `Serializer[T]` abstraction, `acks` from config, and trace context injected into headers through `kotel`.
+- `Client() *kgo.Client` is exposed for advanced use.
+
+### coordination
+- **idempotency**: `Do[T](ctx, store, key, fn, opts...)`.
+  `Store` interface: `Begin(key, ttl) (State, error)`, `Complete(key, result)`, `Fail(key)`.
+  States are `InProgress`, `Completed` and `Failed`. **Documented guarantee: at-most-once start
+  per key within the TTL, not exactly-once.** A crash between the side effect and `Complete`
+  leaves an expired in-progress record, so the operation must be safe to re-run or must commit
+  in the same transaction as the store. The Postgres store supports that same-transaction case.
+- **lock**: `Locker.Acquire(ctx, key, ttl) (Lease, error)`. A `Lease` carries `Token` (owner)
+  and `Fence uint64`. The Postgres implementation (advisory lock plus a sequence for fencing)
+  is recommended for correctness. The Redis implementation is documented as best-effort
+  (efficiency only, not safety), following Kleppmann's critique of Redlock.
+- **featureflag**: adopt **OpenFeature** (`github.com/open-feature/go-sdk`). It already is the
+  vendor-neutral evaluator abstraction, and Flipt ships a provider. We add a small
+  `Evaluator` interface for consumers, plus metrics and tracing hooks and a documented fail-mode per call (`featureflag.FailOpen` / `FailClosed`).
+
+---
+
+## 5. Configuration strategy
+
+- Each package exports a `Config` struct with `env` and `envDefault` tags and **no prefix**.
+  The service composes them and chooses prefixes:
+  ```go
+  type Config struct {
+      App      AppConfig         `envPrefix:"APP_"`
+      Postgres postgres.Config   `envPrefix:"PG_"`
+      Kafka    kafka.ConsumerConfig `envPrefix:"KAFKA_"`
+  }
+  cfg, err := config.Load[Config]()
+  ```
+- Packages also validate their own `Config` in `New`, so a hand-built config fails as fast as a loaded one.
+- Secrets in config are typed `config.Secret` and redacted by construction. Prefer pulling
+  real credentials from `secret.Provider` at runtime over passing them in environment variables.
+
+## 6. Naming deviations from the target tree (approved 2026-10-08)
+
+| Target | Proposed | Why |
+|---|---|---|
+| `testing/` | `testkit/` | `package testing` collides with stdlib in every `_test.go`. |
+| `errors/` | keep, but re-export `Is/As/Unwrap/Join/New` | Avoids the import-alias dance at every call site. |
+| `middleware/` | `requestid/` (+ transport-specific middleware in `transport/*`) | The prompt itself asks to keep middleware in the transports. A top-level grab-bag is the "giant middleware package" it warns against. The only transport-neutral piece is the request/correlation ID context. |
+
+## 7. Observability strategy
+
+- **Metric names**: `<domain>_<thing>_<unit>`. Examples: `http_server_request_duration_seconds`,
+  `kafka_consumer_records_total`, `workerpool_queue_depth`, `secret_rotation_total`.
+  HTTP, gRPC and DB metrics follow OTel semantic conventions where they exist.
+- **Allowed label values** are bounded enums or config-time names: `service`, `method`,
+  `route` (the template, never the raw path), `status_class`, `topic`, `partition`, `outcome`,
+  `error_kind`, `pool`, `breaker`. **Forbidden**: user IDs, request IDs, raw URLs, error
+  messages, keys and offsets. A `metrics.Label` helper rejects values outside an allow-list in tests.
+- **Traces**: W3C `traceparent` and baggage. Propagation goes through HTTP headers, gRPC
+  metadata and Kafka record headers (kotel), so HTTP → A → Kafka → B → Postgres is one trace.
+  The span attribute allow-list mirrors the logging deny-list. Bodies and payloads are never recorded.
+- **Logs**: one JSON line per request or record at the edge, plus warn/error inside packages.
+  Hot paths never log per item at info level.
+
+## 8. Quality gates (CI)
+
+`go vet`, `staticcheck`/`golangci-lint`, `go test -race -shuffle=on ./...` in every module,
+`govulncheck`, benchmarks for hot paths (`workerpool`, `batch`, logging handler, retry) with
+`benchstat` comparison on PRs, and integration tests with testcontainers-go behind a
+`//go:build integration` tag. Import rules are enforced with `depguard`. Additive changes
+are checked with `gorelease` / `apidiff`.
+
+---
+
+## 9. Implementation order
+
+Each step is one PR, reviewable on its own.
+
+| # | Scope | Depends on |
+|---|---|---|
+| 0 | ✅ `go 1.26`, dependency upgrade (clears 7 of 8 reachable vulns), CI (`.github/workflows/go.yml`), `go/Makefile`, `go/.golangci.yml` (legacy paths excluded, depguard rules) | — |
+| 0b | Legacy JWT middleware: `jwt` v3 → v5 (GO-2025-3553, no v3 fix) and signing key via parameter instead of `"secret"` | 0 |
+| 1 | `errors` | 0 |
+| 2 | `observability/logging`, `requestid` | 1 |
+| 3 | `observability/tracing`, `observability/metrics` (replaces broken `observability`) | 2 |
+| 4 | `config` | 1 |
+| 5 | `lifecycle/graceful`, `health` | 2 |
+| 6 | `resilience/retry`, `circuitbreaker`, `ratelimit` | 1 |
+| 7 | `concurrency/workerpool`, `batch` | 1 |
+| 8 | `transport/http` (server + client), `echoadapter` | 2–7 |
+| 9 | `secret`, `secret/rotation` | 6 |
+| 10 | `secret/vault` | 9 |
+| 11 | `datastore/postgres`, `datastore/redis` | 9 |
+| 12 | `transport/grpc` | 2–6 |
+| 13 | `messaging/kafka` | 6, 7 |
+| 14 | `idempotency` (+ pg/redis stores), `lock`, `featureflag` | 11 |
+
+Steps 1–7 alone are enough for a service to adopt logging, config, shutdown and
+resilience before any infrastructure module exists.
+
+## 10. Migration and compatibility
+
+- **Versioning**: the repo is pre-1.0 and has no tags. Tag the current `main` as
+  `go/v0.1.0` so existing consumers can pin it. The new packages ship as `v0.x`,
+  minor bumps may break until v1.0 per package, and the API is frozen at v1.0 after two services have adopted it.
+- **Legacy packages** (`logger`, `observability`, `http/*`, `constant`, `utils`): mark
+  `// Deprecated:` with a pointer to the replacement in the first release. Fix only the
+  security issue now (hard-coded JWT key → key supplied via option), and delete the packages at v1.0.
+- **Per-service migration**: (1) swap logrus for slog through `observability/logging`,
+  (2) replace `http.NewContext` with `graceful`, (3) mount `transport/http` middleware into
+  Echo with `echo.WrapMiddleware`, (4) adopt datastore modules as services touch them.
+- **After v1.0**: only additive changes. New behaviour goes behind options that default to
+  current behaviour. Removals go through one minor release with `Deprecated:` and are
+  checked with `apidiff` in CI.
+
+## 11. Build vs. adopt
+
+| Concern | Decision |
+|---|---|
+| Logging | **Adopt** `log/slog` (stdlib); we write only a handler wrapper |
+| Tracing / metrics | **Adopt** OTel SDK, `otelhttp`, `otelgrpc`, `otelpgx`, `redisotel`, `kotel`, `kprom` |
+| Config parsing | **Adopt** `caarlos0/env/v11` + `go-playground/validator/v10` |
+| Retry | **Build** (~200 LOC; needs our error kinds, clock and hooks). `cenkalti/backoff/v5` is the fallback |
+| Circuit breaker | **Wrap** `sony/gobreaker/v2` (add metrics, ctx, error-kind-aware failure counting) |
+| Local rate limit | **Wrap** `golang.org/x/time/rate` (add bounded wait and metrics) |
+| Distributed rate limit | **Adopt** `go-redis/redis_rate` in the redis module |
+| Worker pool / batch | **Build** (small, and needs our metrics and shutdown semantics) |
+| gRPC middleware | **Adopt** `grpc-ecosystem/go-grpc-middleware/v2` |
+| Kafka | **Adopt** `twmb/franz-go`: pure Go, explicit rebalance hooks, per-partition pause, no cgo. segmentio/kafka-go lacks fine commit control, and confluent-kafka-go needs cgo |
+| Postgres | **Adopt** `jackc/pgx/v5` (`pgxpool`); replaces `lib/pq` |
+| Redis | **Adopt** `redis/go-redis/v9` |
+| Vault | **Adopt** `hashicorp/vault/api` (+ `LifetimeWatcher`) |
+| Feature flags | **Adopt** OpenFeature Go SDK + Flipt provider |
+| UUID | **Adopt** `google/uuid`; drop `satori/go.uuid` |
+| Health, graceful, idempotency, lock | **Build** (small, and their semantics are ours to define) |
+| Test assertions | **Adopt** `stretchr/testify` or stdlib. `testkit` holds only the clock, fakes and log capture |
+
+## 12. Open questions for the team
+
+1. ~~Multi-module now, or single module until v1 (§2)?~~ Single module.
+2. Prometheus pull (`/metrics`) or OTLP push as the default metrics exporter?
+3. Is Echo the organizational standard? That decides whether `echoadapter` is permanent or migration-only.
+4. Minimum Go version consumers must be on.
+5. ~~Approve the renames in §6.~~ Approved.
