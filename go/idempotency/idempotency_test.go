@@ -5,8 +5,9 @@ import (
 	"testing"
 	"time"
 
-	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
-	"go.opentelemetry.io/otel/sdk/metric/metricdata"
+	"go.opentelemetry.io/otel/attribute"
+
+	"github.com/Arif9878/common/go/testkit"
 
 	"github.com/Arif9878/common/go/errors"
 	"github.com/Arif9878/common/go/idempotency"
@@ -29,23 +30,16 @@ func TestInProgressIsRetryable(t *testing.T) {
 }
 
 func TestMetrics(t *testing.T) {
-	reader := sdkmetric.NewManualReader()
-	mp := idempotency.WithMeterProvider(sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader)))
+	mp, m := testkit.NewMetrics(t)
 	s := idempotency.NewMemoryStore()
 	fn := func(context.Context) (int, error) { return 1, nil }
-	_, _ = idempotency.Do(context.Background(), s, "k", fn, mp, idempotency.WithName("charge"))
-	_, _ = idempotency.Do(context.Background(), s, "k", fn, mp, idempotency.WithName("charge"))
+	opts := []idempotency.Option{idempotency.WithMeterProvider(mp), idempotency.WithName("charge")}
+	_, _ = idempotency.Do(context.Background(), s, "k", fn, opts...)
+	_, _ = idempotency.Do(context.Background(), s, "k", fn, opts...)
 
-	var rm metricdata.ResourceMetrics
-	if err := reader.Collect(context.Background(), &rm); err != nil {
-		t.Fatal(err)
-	}
-	got := map[string]int64{}
-	for _, dp := range rm.ScopeMetrics[0].Metrics[0].Data.(metricdata.Sum[int64]).DataPoints {
-		o, _ := dp.Attributes.Value("outcome")
-		got[o.AsString()] = dp.Value
-	}
-	if got["executed"] != 1 || got["duplicate"] != 1 {
-		t.Errorf("outcomes = %v", got)
+	for _, o := range []string{"executed", "duplicate"} {
+		if got := m.Sum("idempotency.calls", attribute.String("operation", "charge"), attribute.String("outcome", o)); got != 1 {
+			t.Errorf("idempotency.calls{outcome=%s} = %v, want 1", o, got)
+		}
 	}
 }

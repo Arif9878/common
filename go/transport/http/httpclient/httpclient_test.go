@@ -13,10 +13,9 @@ import (
 	"testing/synctest"
 	"time"
 
+	"github.com/Arif9878/common/go/testkit"
+
 	"go.opentelemetry.io/otel/propagation"
-	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
-	"go.opentelemetry.io/otel/sdk/metric/metricdata"
-	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 
 	"github.com/Arif9878/common/go/errors"
 	"github.com/Arif9878/common/go/requestid"
@@ -293,13 +292,13 @@ func TestRequestIDPropagation(t *testing.T) {
 
 func TestTracingAndMetricsPerAttempt(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
-		reader := sdkmetric.NewManualReader()
-		tp := sdktrace.NewTracerProvider()
+		mp, metrics := testkit.NewMetrics(t)
+		tp, _ := testkit.NewTracer(t)
 		f := &fake{steps: []func(*http.Request) (*http.Response, error){status(502, ""), status(200, "")}}
 		c := newClient(f, httpclient.WithRetry(),
 			httpclient.WithTracerProvider(tp),
 			httpclient.WithPropagators(propagation.TraceContext{}),
-			httpclient.WithMeterProvider(sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))))
+			httpclient.WithMeterProvider(mp))
 
 		ctx, span := tp.Tracer("test").Start(context.Background(), "parent")
 		resp, err := get(t, c, ctx, http.MethodGet, nil)
@@ -319,21 +318,7 @@ func TestTracingAndMetricsPerAttempt(t *testing.T) {
 			t.Error("attempts share a span; want one span per attempt")
 		}
 
-		var rm metricdata.ResourceMetrics
-		if err := reader.Collect(context.Background(), &rm); err != nil {
-			t.Fatal(err)
-		}
-		var attempts uint64
-		for _, sm := range rm.ScopeMetrics {
-			for _, m := range sm.Metrics {
-				if m.Name == "http.client.request.duration" {
-					for _, dp := range m.Data.(metricdata.Histogram[float64]).DataPoints {
-						attempts += dp.Count
-					}
-				}
-			}
-		}
-		if attempts != 2 {
+		if attempts := metrics.HistogramCount("http.client.request.duration"); attempts != 2 {
 			t.Errorf("recorded %d attempts, want 2", attempts)
 		}
 	})

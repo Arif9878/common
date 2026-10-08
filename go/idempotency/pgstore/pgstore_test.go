@@ -4,19 +4,14 @@ import (
 	"context"
 	stderrors "errors"
 	"fmt"
-	"io"
-	"log/slog"
-	"net/url"
-	"os"
-	"strconv"
-	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/Arif9878/common/go/testkit/pgtest"
+
 	"github.com/jackc/pgx/v5"
 
-	"github.com/Arif9878/common/go/config"
 	"github.com/Arif9878/common/go/datastore/postgres"
 	"github.com/Arif9878/common/go/errors"
 	"github.com/Arif9878/common/go/idempotency"
@@ -26,21 +21,7 @@ import (
 
 func newDB(t *testing.T) *postgres.DB {
 	t.Helper()
-	raw := os.Getenv("POSTGRES_TEST_URL")
-	if raw == "" {
-		t.Skip("POSTGRES_TEST_URL not set")
-	}
-	u, _ := url.Parse(raw)
-	port, _ := strconv.Atoi(u.Port())
-	pw, _ := u.User.Password()
-	db, err := postgres.New(context.Background(), postgres.Config{
-		Host: u.Hostname(), Port: port, Database: strings.TrimPrefix(u.Path, "/"),
-		User: u.User.Username(), Password: config.Secret(pw), SSLMode: "disable", MaxConns: 30,
-	}, postgres.WithLogger(slog.New(slog.NewTextHandler(io.Discard, nil))))
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = db.Close(context.Background()) })
+	db := pgtest.DB(t)
 	if _, err := db.Exec(context.Background(), pgstore.Schema); err != nil {
 		t.Fatal(err)
 	}

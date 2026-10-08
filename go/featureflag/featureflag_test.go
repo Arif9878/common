@@ -5,12 +5,12 @@ import (
 	"strings"
 	"testing"
 
+	"go.opentelemetry.io/otel/attribute"
+
+	"github.com/Arif9878/common/go/testkit"
+
 	"github.com/open-feature/go-sdk/openfeature"
 	"github.com/open-feature/go-sdk/openfeature/memprovider"
-	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
-	"go.opentelemetry.io/otel/sdk/metric/metricdata"
-	sdktrace "go.opentelemetry.io/otel/sdk/trace"
-	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 
 	"github.com/Arif9878/common/go/errors"
 	"github.com/Arif9878/common/go/featureflag"
@@ -84,30 +84,22 @@ func TestFailuresReturnDefault(t *testing.T) {
 }
 
 func TestTelemetry(t *testing.T) {
-	reader := sdkmetric.NewManualReader()
-	e := newEvaluator(t, featureflag.WithMeterProvider(sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))))
-	spans := tracetest.NewSpanRecorder()
-	tp := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(spans))
+	mp, m := testkit.NewMetrics(t)
+	e := newEvaluator(t, featureflag.WithMeterProvider(mp))
+	tp, spans := testkit.NewTracer(t)
 	ctx, span := tp.Tracer("test").Start(context.Background(), "request")
 	_, _ = e.Bool(ctx, "checkout.new-pricing", false, featureflag.Attributes{featureflag.TargetingKey: "u-beta", "email": "a@b.c"})
 	_, _ = e.Bool(ctx, "missing", false, nil)
 	span.End()
 
-	var rm metricdata.ResourceMetrics
-	if err := reader.Collect(context.Background(), &rm); err != nil {
-		t.Fatal(err)
+	evals := func(flag, outcome string) float64 {
+		return m.Sum("featureflag.evaluations", attribute.String("flag", flag), attribute.String("outcome", outcome))
 	}
-	got := map[string]int64{}
-	for _, dp := range rm.ScopeMetrics[0].Metrics[0].Data.(metricdata.Sum[int64]).DataPoints {
-		f, _ := dp.Attributes.Value("flag")
-		o, _ := dp.Attributes.Value("outcome")
-		got[f.AsString()+"/"+o.AsString()] = dp.Value
-	}
-	if got["checkout.new-pricing/ok"] != 1 || got["missing/error"] != 1 {
-		t.Errorf("metrics = %v", got)
+	if evals("checkout.new-pricing", "ok") != 1 || evals("missing", "error") != 1 {
+		t.Errorf("evaluations: ok %v, error %v", evals("checkout.new-pricing", "ok"), evals("missing", "error"))
 	}
 
-	events := spans.Ended()[0].Events()
+	events := spans.Named("request")[0].Events()
 	if len(events) != 2 || events[0].Name != "feature_flag.evaluation" {
 		t.Fatalf("events = %v", events)
 	}

@@ -1,17 +1,16 @@
 package commonfx_test
 
 import (
-	"bytes"
 	"context"
 	"io"
 	"net/http"
 	"strings"
-	"sync"
 	"testing"
+
+	"github.com/Arif9878/common/go/testkit"
 
 	"go.opentelemetry.io/otel/propagation"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
-	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 	"go.opentelemetry.io/otel/trace"
 	"go.uber.org/fx"
 	"go.uber.org/fx/fxtest"
@@ -20,39 +19,13 @@ import (
 	healthpb "google.golang.org/grpc/health/grpc_health_v1"
 
 	commonfx "github.com/Arif9878/common/go/fx"
-	"github.com/Arif9878/common/go/observability/logging"
 	"github.com/Arif9878/common/go/transport/http/httpserver"
 )
 
-// syncBuffer is a bytes.Buffer safe for concurrent log writes.
-type syncBuffer struct {
-	mu  sync.Mutex
-	buf bytes.Buffer
-}
-
-func newSyncBuffer() *syncBuffer { return &syncBuffer{} }
-
-func (b *syncBuffer) Write(p []byte) (int, error) {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	return b.buf.Write(p)
-}
-
-func (b *syncBuffer) String() string {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	return b.buf.String()
-}
-
 func TestTelemetryIsWiredAutomatically(t *testing.T) {
-	httpAddr, grpcAddr := freeAddr(t), freeAddr(t)
-	spans := tracetest.NewSpanRecorder()
-	tp := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(spans))
-	logs := newSyncBuffer()
-	logger, err := logging.New(logging.Config{}, logging.WithWriter(logs))
-	if err != nil {
-		t.Fatal(err)
-	}
+	httpAddr, grpcAddr := testkit.FreeAddr(t), testkit.FreeAddr(t)
+	tp, spans := testkit.NewTracer(t)
+	logger, logs := testkit.NewLogger(t)
 
 	var client *http.Client
 	var conn *grpc.ClientConn
@@ -149,9 +122,8 @@ func TestTelemetryIsWiredAutomatically(t *testing.T) {
 }
 
 func TestHTTPHandlerAsIs(t *testing.T) {
-	addr := freeAddr(t)
-	logs := newSyncBuffer()
-	logger, _ := logging.New(logging.Config{}, logging.WithWriter(logs))
+	addr := testkit.FreeAddr(t)
+	logger, logs := testkit.NewLogger(t)
 	app := fxtest.New(t,
 		fx.Supply(logger, httpserver.Config{Addr: addr}),
 		fx.Provide(fx.Annotate(func() *http.ServeMux {

@@ -15,6 +15,7 @@ linters:
         production:
           files:
             - "!$test"
+            - "!**/testkit/**" # testkit's own helpers may build on it
           deny:
             - pkg: github.com/Arif9878/common/go/testkit
               desc: production packages must not depend on testkit

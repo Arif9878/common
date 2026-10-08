@@ -5,21 +5,18 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
-	"net/url"
 	"os"
-	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/Arif9878/common/go/testkit"
+	"github.com/Arif9878/common/go/testkit/pgtest"
+
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
-	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
-	"go.opentelemetry.io/otel/sdk/metric/metricdata"
-	sdktrace "go.opentelemetry.io/otel/sdk/trace"
-	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 
 	"github.com/Arif9878/common/go/config"
 	"github.com/Arif9878/common/go/datastore/postgres"
@@ -88,24 +85,13 @@ func TestUnreachableDoesNotLeakPassword(t *testing.T) {
 	}
 }
 
-// testConfig returns a Config from POSTGRES_TEST_URL
-// (postgres://user:pass@host:port/db) or skips the test.
+// testConfig returns the POSTGRES_TEST_URL database with a small pool, or
+// skips the test.
 func testConfig(t *testing.T) postgres.Config {
 	t.Helper()
-	raw := os.Getenv("POSTGRES_TEST_URL")
-	if raw == "" {
-		t.Skip("POSTGRES_TEST_URL not set")
-	}
-	u, err := url.Parse(raw)
-	if err != nil {
-		t.Fatal(err)
-	}
-	port, _ := strconv.Atoi(u.Port())
-	pw, _ := u.User.Password()
-	return postgres.Config{
-		Host: u.Hostname(), Port: port, Database: strings.TrimPrefix(u.Path, "/"),
-		User: u.User.Username(), Password: config.Secret(pw), SSLMode: "disable", MaxConns: 5,
-	}
+	cfg := pgtest.Config(t)
+	cfg.MaxConns = 5
+	return cfg
 }
 
 func newDB(t *testing.T, cfg postgres.Config, opts ...postgres.Option) *postgres.DB {
@@ -120,12 +106,9 @@ func newDB(t *testing.T, cfg postgres.Config, opts ...postgres.Option) *postgres
 
 func TestQueriesAndTelemetry(t *testing.T) {
 	cfg := testConfig(t)
-	reader := sdkmetric.NewManualReader()
-	spans := tracetest.NewSpanRecorder()
-	tp := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(spans))
-	db := newDB(t, cfg,
-		postgres.WithMeterProvider(sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))),
-		postgres.WithTracerProvider(tp))
+	mp, metrics := testkit.NewMetrics(t)
+	tp, spans := testkit.NewTracer(t)
+	db := newDB(t, cfg, postgres.WithMeterProvider(mp), postgres.WithTracerProvider(tp))
 	// Query spans are children of the caller's span, as inside a request.
 	ctx, parent := tp.Tracer("test").Start(context.Background(), "request")
 	defer parent.End()
@@ -175,20 +158,8 @@ func TestQueriesAndTelemetry(t *testing.T) {
 		t.Error("no span with the SQL statement")
 	}
 
-	var rm metricdata.ResourceMetrics
-	if err := reader.Collect(ctx, &rm); err != nil {
-		t.Fatal(err)
-	}
-	found := false
-	for _, sm := range rm.ScopeMetrics {
-		for _, m := range sm.Metrics {
-			if m.Name == "db.client.connection.max" {
-				found = m.Data.(metricdata.Sum[int64]).DataPoints[0].Value == 5
-			}
-		}
-	}
-	if !found {
-		t.Error("pool max-connections metric missing")
+	if got := metrics.Sum("db.client.connection.max"); got != 5 {
+		t.Errorf("db.client.connection.max = %v, want 5", got)
 	}
 }
 
@@ -313,16 +284,11 @@ func TestCredentialRotation(t *testing.T) {
 	}
 
 	// With the transaction done, the first pool closes and its role is revoked.
-	deadline := time.Now().Add(5 * time.Second)
-	for time.Now().Before(deadline) {
+	testkit.Eventually(t, 5*time.Second, "all three replaced roles revoked", func() bool {
 		r.mu.Lock()
-		n := len(r.revoked)
-		r.mu.Unlock()
-		if n == 3 {
-			break
-		}
-		time.Sleep(20 * time.Millisecond)
-	}
+		defer r.mu.Unlock()
+		return len(r.revoked) == 3
+	})
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if len(r.revoked) != 3 || r.revoked[2] != first {

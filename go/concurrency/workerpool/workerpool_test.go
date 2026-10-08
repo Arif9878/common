@@ -12,8 +12,9 @@ import (
 	"testing/synctest"
 	"time"
 
-	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
-	"go.opentelemetry.io/otel/sdk/metric/metricdata"
+	"go.opentelemetry.io/otel/attribute"
+
+	"github.com/Arif9878/common/go/testkit"
 
 	"github.com/Arif9878/common/go/concurrency/workerpool"
 	"github.com/Arif9878/common/go/errors"
@@ -265,46 +266,26 @@ func TestNoGoroutinePerTask(t *testing.T) {
 }
 
 func TestMetrics(t *testing.T) {
-	reader := sdkmetric.NewManualReader()
-	mp := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))
+	mp, m := testkit.NewMetrics(t)
 	p := workerpool.New("thumbs", quiet, workerpool.WithWorkers(3), workerpool.WithQueueSize(7),
 		workerpool.WithMeterProvider(mp), workerpool.WithOnError(func(context.Context, error) {}))
 	_ = p.Submit(context.Background(), func(context.Context) error { return nil })
 	_ = p.Submit(context.Background(), func(context.Context) error { return stderrors.New("x") })
 	_ = p.Submit(context.Background(), func(context.Context) error { panic("x") })
 
-	var rm metricdata.ResourceMetrics
-	collect := func() map[string]int64 {
-		if err := reader.Collect(context.Background(), &rm); err != nil {
-			t.Fatal(err)
-		}
-		got := map[string]int64{}
-		for _, m := range rm.ScopeMetrics[0].Metrics {
-			switch d := m.Data.(type) {
-			case metricdata.Sum[int64]:
-				for _, dp := range d.DataPoints {
-					o, _ := dp.Attributes.Value("outcome")
-					got["tasks."+o.AsString()] = dp.Value
-				}
-			case metricdata.Gauge[int64]:
-				got[m.Name] = d.DataPoints[0].Value
-			}
-		}
-		return got
-	}
-
 	// Gauges are observed while the pool is running.
-	got := collect()
-	if got["workerpool.workers"] != 3 || got["workerpool.queue.capacity"] != 7 {
-		t.Errorf("gauges = %v", got)
+	pool := attribute.String("pool", "thumbs")
+	if m.Gauge("workerpool.workers", pool) != 3 || m.Gauge("workerpool.queue.capacity", pool) != 7 {
+		t.Errorf("gauges: workers %v, capacity %v", m.Gauge("workerpool.workers", pool), m.Gauge("workerpool.queue.capacity", pool))
 	}
 	shutdown(t, p)
-	got = collect()
-	for _, k := range []string{"tasks.success", "tasks.error", "tasks.panic"} {
-		if got[k] != 1 {
-			t.Errorf("metrics = %v", got)
-			break
+	for _, o := range []string{"success", "error", "panic"} {
+		if got := m.Sum("workerpool.tasks", pool, attribute.String("outcome", o)); got != 1 {
+			t.Errorf("workerpool.tasks{outcome=%s} = %v, want 1", o, got)
 		}
+	}
+	if got := m.HistogramCount("workerpool.task.duration", pool); got != 3 {
+		t.Errorf("task duration count = %d", got)
 	}
 }
 

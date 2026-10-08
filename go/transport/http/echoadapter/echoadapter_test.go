@@ -1,7 +1,6 @@
 package echoadapter_test
 
 import (
-	"bytes"
 	"encoding/json"
 	stderrors "errors"
 	"net/http"
@@ -9,20 +8,18 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Arif9878/common/go/testkit"
+
 	"github.com/labstack/echo/v4"
 
 	"github.com/Arif9878/common/go/errors"
-	"github.com/Arif9878/common/go/observability/logging"
 	"github.com/Arif9878/common/go/transport/http/echoadapter"
 	"github.com/Arif9878/common/go/transport/http/httpserver"
 )
 
-func newEcho(t *testing.T, logs *bytes.Buffer) *echo.Echo {
+func newEcho(t *testing.T) (*echo.Echo, *testkit.Logs) {
 	t.Helper()
-	logger, err := logging.New(logging.Config{}, logging.WithWriter(logs))
-	if err != nil {
-		t.Fatal(err)
-	}
+	logger, logs := testkit.NewLogger(t)
 	e := echo.New()
 	e.HTTPErrorHandler = echoadapter.ErrorHandler
 	e.Use(echoadapter.Middleware(httpserver.WithLogger(logger)))
@@ -38,7 +35,7 @@ func newEcho(t *testing.T, logs *bytes.Buffer) *echo.Echo {
 		}
 		return c.JSON(http.StatusOK, map[string]string{"id": c.Param("id")})
 	})
-	return e
+	return e, logs
 }
 
 func serve(t *testing.T, e *echo.Echo, path string) *httptest.ResponseRecorder {
@@ -48,25 +45,8 @@ func serve(t *testing.T, e *echo.Echo, path string) *httptest.ResponseRecorder {
 	return rec
 }
 
-func accessLogs(t *testing.T, logs *bytes.Buffer) []map[string]any {
-	t.Helper()
-	var out []map[string]any
-	dec := json.NewDecoder(bytes.NewReader(logs.Bytes()))
-	for dec.More() {
-		var m map[string]any
-		if err := dec.Decode(&m); err != nil {
-			t.Fatal(err)
-		}
-		if m["msg"] == "http request" {
-			out = append(out, m)
-		}
-	}
-	return out
-}
-
 func TestMiddleware(t *testing.T) {
-	var logs bytes.Buffer
-	e := newEcho(t, &logs)
+	e, logs := newEcho(t)
 
 	if rec := serve(t, e, "/orders/o-42"); rec.Code != 200 || rec.Header().Get("X-Request-ID") == "" {
 		t.Fatalf("ok: %d %v", rec.Code, rec.Header())
@@ -89,9 +69,9 @@ func TestMiddleware(t *testing.T) {
 		t.Fatalf("unrouted: %d", rec.Code)
 	}
 
-	access := accessLogs(t, &logs)
+	access := logs.Messages("http request")
 	if len(access) != 5 {
-		t.Fatalf("got %d access logs:\n%s", len(access), logs.String())
+		t.Fatalf("got %d access logs:\n%s", len(access), logs)
 	}
 	wantStatus := []float64{200, 404, 400, 500, 404}
 	for i, l := range access[:4] {
@@ -103,7 +83,7 @@ func TestMiddleware(t *testing.T) {
 		t.Errorf("error fields: %v / %v", access[1], access[3])
 	}
 	if strings.Contains(logs.String(), "o-42") {
-		t.Errorf("raw path logged:\n%s", logs.String())
+		t.Errorf("raw path logged:\n%s", logs)
 	}
 }
 

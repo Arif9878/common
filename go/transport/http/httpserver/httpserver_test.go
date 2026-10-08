@@ -1,7 +1,6 @@
 package httpserver_test
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	stderrors "errors"
@@ -14,16 +13,13 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Arif9878/common/go/testkit"
+
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/propagation"
-	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
-	"go.opentelemetry.io/otel/sdk/metric/metricdata"
-	sdktrace "go.opentelemetry.io/otel/sdk/trace"
-	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 
 	"github.com/Arif9878/common/go/errors"
 	"github.com/Arif9878/common/go/lifecycle/graceful"
-	"github.com/Arif9878/common/go/observability/logging"
 	"github.com/Arif9878/common/go/requestid"
 	"github.com/Arif9878/common/go/resilience/ratelimit"
 	"github.com/Arif9878/common/go/transport/http/httpserver"
@@ -132,8 +128,7 @@ func TestRequestID(t *testing.T) {
 }
 
 func TestRecover(t *testing.T) {
-	var buf bytes.Buffer
-	logger := slog.New(slog.NewJSONHandler(&buf, nil))
+	logger, logs := testkit.NewLogger(t)
 	h := httpserver.Recover(logger)(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
 		panic("nil map")
 	}))
@@ -142,8 +137,8 @@ func TestRecover(t *testing.T) {
 	if p := decodeProblem(t, rec); rec.Code != 500 || p.Code != "internal" || strings.Contains(rec.Body.String(), "nil map") {
 		t.Errorf("response %d %s", rec.Code, rec.Body)
 	}
-	if !strings.Contains(buf.String(), "nil map") || !strings.Contains(buf.String(), "stack") {
-		t.Errorf("panic not logged with stack: %s", buf.String())
+	if !logs.Contains("nil map") || !logs.Contains(`"stack"`) {
+		t.Errorf("panic not logged with stack: %s", logs)
 	}
 
 	t.Run("ErrAbortHandler is re-raised", func(t *testing.T) {
@@ -255,22 +250,21 @@ func TestAuth(t *testing.T) {
 // stack is a full Handler with in-memory logs, metrics and spans.
 type stack struct {
 	handler http.Handler
-	logs    *bytes.Buffer
-	reader  *sdkmetric.ManualReader
-	spans   *tracetest.SpanRecorder
+	logs    *testkit.Logs
+	metrics *testkit.Metrics
+	spans   *testkit.Spans
 }
 
 func newStack(t *testing.T, mux http.Handler, opts ...httpserver.Option) *stack {
 	t.Helper()
-	s := &stack{logs: &bytes.Buffer{}, reader: sdkmetric.NewManualReader(), spans: tracetest.NewSpanRecorder()}
-	logger, err := logging.New(logging.Config{}, logging.WithWriter(s.logs))
-	if err != nil {
-		t.Fatal(err)
-	}
+	logger, logs := testkit.NewLogger(t)
+	mp, metrics := testkit.NewMetrics(t)
+	tp, spans := testkit.NewTracer(t)
+	s := &stack{logs: logs, metrics: metrics, spans: spans}
 	s.handler = httpserver.Handler(mux, append([]httpserver.Option{
 		httpserver.WithLogger(logger),
-		httpserver.WithMeterProvider(sdkmetric.NewMeterProvider(sdkmetric.WithReader(s.reader))),
-		httpserver.WithTracerProvider(sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(s.spans))),
+		httpserver.WithMeterProvider(mp),
+		httpserver.WithTracerProvider(tp),
 		httpserver.WithPropagators(propagation.TraceContext{}),
 	}, opts...)...)
 	return s
@@ -283,19 +277,7 @@ func (s *stack) do(t *testing.T, r *http.Request) *httptest.ResponseRecorder {
 	return rec
 }
 
-func (s *stack) logLines(t *testing.T) []map[string]any {
-	t.Helper()
-	var out []map[string]any
-	dec := json.NewDecoder(bytes.NewReader(s.logs.Bytes()))
-	for dec.More() {
-		var m map[string]any
-		if err := dec.Decode(&m); err != nil {
-			t.Fatal(err)
-		}
-		out = append(out, m)
-	}
-	return out
-}
+func (s *stack) logLines(*testing.T) []testkit.Record { return s.logs.Records() }
 
 func ordersMux() *http.ServeMux {
 	mux := http.NewServeMux()
@@ -368,28 +350,19 @@ func TestHandlerEndToEnd(t *testing.T) {
 	}
 
 	// Metrics: bounded attributes, including the filtered request.
-	var rm metricdata.ResourceMetrics
-	if err := s.reader.Collect(context.Background(), &rm); err != nil {
-		t.Fatal(err)
-	}
-	routes := map[string]uint64{}
-	for _, m := range rm.ScopeMetrics[0].Metrics {
-		if m.Name != "http.server.request.duration" {
-			continue
-		}
-		for _, dp := range m.Data.(metricdata.Histogram[float64]).DataPoints {
-			route, _ := dp.Attributes.Value("http.route")
-			status, _ := dp.Attributes.Value("http.response.status_code")
-			routes[route.AsString()+" "+status.String()] += dp.Count
-			if et, ok := dp.Attributes.Value(attribute.Key("error.type")); ok && et.AsString() != "500" {
-				t.Errorf("error.type = %v", et)
-			}
+	for _, want := range []struct {
+		route  string
+		status int
+	}{{"/orders/{id}", 200}, {"/orders/{id}", 404}, {"/orders", 500}, {"unmatched", 404}, {"/live", 200}} {
+		n := s.metrics.HistogramCount("http.server.request.duration",
+			attribute.String("http.route", want.route), attribute.Int("http.response.status_code", want.status))
+		if n == 0 {
+			t.Errorf("no http.server.request.duration for %s %d", want.route, want.status)
 		}
 	}
-	for _, want := range []string{"/orders/{id} 200", "/orders/{id} 404", "/orders 500", "unmatched 404", "/live 200"} {
-		if routes[want] == 0 {
-			t.Errorf("no metric for %q in %v", want, routes)
-		}
+	if n := s.metrics.HistogramCount("http.server.request.duration",
+		attribute.String("http.route", "/orders"), attribute.String("error.type", "500")); n != 1 {
+		t.Errorf("5xx request without error.type=500 (count %d)", n)
 	}
 }
 

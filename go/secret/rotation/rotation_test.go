@@ -1,7 +1,6 @@
 package rotation_test
 
 import (
-	"bytes"
 	"context"
 	stderrors "errors"
 	"io"
@@ -15,8 +14,9 @@ import (
 	"testing/synctest"
 	"time"
 
-	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
-	"go.opentelemetry.io/otel/sdk/metric/metricdata"
+	"go.opentelemetry.io/otel/attribute"
+
+	"github.com/Arif9878/common/go/testkit"
 
 	"github.com/Arif9878/common/go/errors"
 	"github.com/Arif9878/common/go/secret"
@@ -398,12 +398,12 @@ func TestRotateRacingCloseLeaksNothing(t *testing.T) {
 
 func TestObservability(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
-		var logs bytes.Buffer
-		reader := sdkmetric.NewManualReader()
+		logger, logs := testkit.NewLogger(t)
+		mp, m := testkit.NewMetrics(t)
 		e := newEnv(10 * time.Second)
 		r := mustNew(t, e,
-			rotation.WithLogger(slog.New(slog.NewJSONHandler(&logs, nil))),
-			rotation.WithMeterProvider(sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))),
+			rotation.WithLogger(logger),
+			rotation.WithMeterProvider(mp),
 			rotation.WithRenewAt(0.7, 0), rotation.WithBackoff(time.Minute, time.Minute))
 
 		e.mu.Lock()
@@ -415,7 +415,7 @@ func TestObservability(t *testing.T) {
 		synctest.Wait()
 
 		out := logs.String()
-		if strings.Contains(out, "pw-") {
+		if logs.Contains("pw-") {
 			t.Fatalf("secret value logged:\n%s", out)
 		}
 		if !strings.Contains(out, `"level":"WARN","msg":"credential rotation failed"`) ||
@@ -423,24 +423,12 @@ func TestObservability(t *testing.T) {
 			t.Errorf("want WARN before expiry and ERROR after:\n%s", out)
 		}
 
-		var rm metricdata.ResourceMetrics
-		if err := reader.Collect(context.Background(), &rm); err != nil {
-			t.Fatal(err)
-		}
-		got := map[string]float64{}
-		for _, m := range rm.ScopeMetrics[0].Metrics {
-			switch d := m.Data.(type) {
-			case metricdata.Sum[int64]:
-				for _, dp := range d.DataPoints {
-					o, _ := dp.Attributes.Value("outcome")
-					got[o.AsString()] = float64(dp.Value)
-				}
-			case metricdata.Gauge[float64]:
-				got[m.Name] = d.DataPoints[0].Value
-			}
-		}
-		if got["success"] != 1 || got["fetch_error"] < 2 || got["rotation.credential.ttl"] >= 0 {
-			t.Errorf("metrics = %v", got)
+		res := attribute.String("resource", "db")
+		success := m.Sum("rotation.attempts", res, attribute.String("outcome", "success"))
+		fetchErrors := m.Sum("rotation.attempts", res, attribute.String("outcome", "fetch_error"))
+		ttl := m.Gauge("rotation.credential.ttl", res)
+		if success != 1 || fetchErrors < 2 || ttl >= 0 {
+			t.Errorf("success %v, fetch_error %v, ttl %v; want 1, >=2, <0", success, fetchErrors, ttl)
 		}
 		closeR(t, r)
 	})

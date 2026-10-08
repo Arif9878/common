@@ -1,7 +1,6 @@
 package vault_test
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"io"
@@ -15,9 +14,11 @@ import (
 	"testing"
 	"time"
 
+	"go.opentelemetry.io/otel/attribute"
+
+	"github.com/Arif9878/common/go/testkit"
+
 	"github.com/hashicorp/vault/api"
-	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
-	"go.opentelemetry.io/otel/sdk/metric/metricdata"
 
 	"github.com/Arif9878/common/go/config"
 	"github.com/Arif9878/common/go/errors"
@@ -285,24 +286,13 @@ func TestTokenRenewalAndRelogin(t *testing.T) {
 	f.tokenTTL = 2
 	c := newClient(t, f, vault.WithReloginBackoff(100*time.Millisecond, 100*time.Millisecond))
 
-	deadline := time.Now().Add(5 * time.Second)
-	for f.renewals.Load() == 0 && time.Now().Before(deadline) {
-		time.Sleep(50 * time.Millisecond)
-	}
-	if f.renewals.Load() == 0 {
-		t.Fatal("token never renewed")
-	}
+	testkit.Eventually(t, 5*time.Second, "a token renewal", func() bool { return f.renewals.Load() > 0 })
 
 	f.mu.Lock()
 	f.renewFails = true
 	f.mu.Unlock()
-	deadline = time.Now().Add(10 * time.Second)
-	for f.logins.Load() < 2 && time.Now().Before(deadline) {
-		time.Sleep(50 * time.Millisecond)
-	}
-	if f.logins.Load() < 2 {
-		t.Fatal("no new login after renewal stopped working")
-	}
+	testkit.Eventually(t, 10*time.Second, "a new login after renewal stopped working",
+		func() bool { return f.logins.Load() >= 2 })
 	// The new token works.
 	if _, err := c.Get(context.Background(), "secret/data/app"); err != nil {
 		t.Fatalf("read with the new token: %v", err)
@@ -340,39 +330,26 @@ func TestRotationWithDynamicCredentials(t *testing.T) {
 
 func TestObservability(t *testing.T) {
 	f := newFakeVault(t)
-	var logs bytes.Buffer
-	reader := sdkmetric.NewManualReader()
-	c := newClient(t, f,
-		vault.WithLogger(slog.New(slog.NewJSONHandler(&logs, nil))),
-		vault.WithMeterProvider(sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))))
+	logger, logs := testkit.NewLogger(t)
+	mp, m := testkit.NewMetrics(t)
+	c := newClient(t, f, vault.WithLogger(logger), vault.WithMeterProvider(mp))
 
 	s, _ := c.Get(context.Background(), "database/creds/orders")
 	_, _ = c.Get(context.Background(), "secret/forbidden")
-	slog.New(slog.NewJSONHandler(&logs, nil)).Info("debug", "secret", s)
-	if strings.Contains(logs.String(), "pw-1") || strings.Contains(logs.String(), "tok-") {
-		t.Fatalf("secret or token logged:\n%s", logs.String())
+	logger.Info("debug", "secret", s)
+	if logs.Contains("pw-1") || logs.Contains("tok-") {
+		t.Fatalf("secret or token logged:\n%s", logs)
 	}
 
-	var rm metricdata.ResourceMetrics
-	if err := reader.Collect(context.Background(), &rm); err != nil {
-		t.Fatal(err)
+	calls := func(op, outcome string) float64 {
+		return m.Sum("vault.requests", attribute.String("operation", op), attribute.String("outcome", outcome))
 	}
-	got := map[string]float64{}
-	for _, m := range rm.ScopeMetrics[0].Metrics {
-		switch d := m.Data.(type) {
-		case metricdata.Sum[int64]:
-			for _, dp := range d.DataPoints {
-				op, _ := dp.Attributes.Value("operation")
-				o, _ := dp.Attributes.Value("outcome")
-				got[op.AsString()+"/"+o.AsString()] = float64(dp.Value)
-			}
-		case metricdata.Gauge[float64]:
-			got[m.Name] = d.DataPoints[0].Value
-		}
+	if calls("login", "ok") != 1 || calls("read", "ok") != 1 || calls("read", "forbidden") != 1 {
+		t.Errorf("vault.requests: login/ok %v, read/ok %v, read/forbidden %v",
+			calls("login", "ok"), calls("read", "ok"), calls("read", "forbidden"))
 	}
-	if got["login/ok"] != 1 || got["read/ok"] != 1 || got["read/forbidden"] != 1 ||
-		got["vault.token.ttl"] < 3500 || got["vault.token.ttl"] > 3600 {
-		t.Errorf("metrics = %v", got)
+	if ttl := m.Gauge("vault.token.ttl"); ttl < 3500 || ttl > 3600 {
+		t.Errorf("vault.token.ttl = %v", ttl)
 	}
 }
 
