@@ -513,7 +513,8 @@ fx.New(
     commonfx.Observability(), commonfx.Lifecycle(),
     commonfx.AdminServer(), commonfx.HTTPServer(), commonfx.GRPCServer(),
     commonfx.Postgres(), commonfx.Redis(), commonfx.Vault(),
-    commonfx.KafkaProducer(), commonfx.KafkaConsumer(newConsumer),
+    commonfx.KafkaProducer(), commonfx.KafkaConsumer("billing", topics, NewBillingHandler),
+    commonfx.GRPCClient("inventory"), commonfx.HTTPClient("payments", httpclient.WithRetry()),
     fx.Provide(...), commonfx.Ready(),                               // Ready always last
     fx.StopTimeout(45*time.Second),
 ).Run()
@@ -528,6 +529,16 @@ stop function in the right phase and adds readiness checks. Options that depend 
 (for example Vault-backed credential rotation) are contributed through value groups
 (`commonfx.PostgresOptions`, ...). The admin server (probes, `/metrics`) stops in the last
 phase so readiness keeps answering 503 during the drain.
+
+Telemetry is wired automatically and explicitly: `Observability()` puts the logger, tracer
+provider, meter provider and propagator in the graph, and every module passes them to the
+package it builds. Nothing depends on OpenTelemetry globals or on option order. `HTTPServer`
+applies the standard middleware itself (`HTTPHandlerAsIs()` for Echo apps that already use
+echoadapter). Named clients (`GRPCClient`, `HTTPClient`, configured from `GRPCClientConfig` /
+`httpclient.Config` with the same name tag) are closed in CloseDeps. `KafkaConsumer` builds the
+consumer with telemetry from a handler constructor. An end-to-end test checks one trace across
+HTTP client → HTTP server → gRPC client → gRPC server, and access logs for both servers, with no
+manual wiring. A mutation check (telemetry not passed to the HTTP middleware) makes it fail.
 
 ## 12. Not yet done
 

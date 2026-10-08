@@ -46,7 +46,6 @@ package commonfx
 
 import (
 	"context"
-	"log/slog"
 	"sync/atomic"
 	"time"
 
@@ -93,19 +92,6 @@ type lifecycleState struct {
 	timeout time.Duration
 }
 
-// LoggerIn takes an optional logger; modules fall back to slog.Default().
-type LoggerIn struct {
-	fx.In
-	Logger *slog.Logger `optional:"true"`
-}
-
-func (in LoggerIn) logger() *slog.Logger {
-	if in.Logger != nil {
-		return in.Logger
-	}
-	return slog.Default()
-}
-
 // Lifecycle provides *graceful.Manager (signal handling left to fx) and
 // *health.Checker, registers the readiness drain in graceful.Unready, and
 // runs every consumer provided with [KafkaConsumer].
@@ -116,15 +102,16 @@ func Lifecycle(opts ...LifecycleOption) fx.Option {
 	}
 	return fx.Module("commonfx.lifecycle",
 		fx.Provide(
-			func(in LoggerIn) *graceful.Manager {
+			newTelemetry,
+			func(t *telemetry) *graceful.Manager {
 				return graceful.New(append([]graceful.Option{
 					graceful.WithSignals(), // fx handles signals
-					graceful.WithLogger(in.logger()),
+					graceful.WithLogger(t.logger),
 					graceful.WithTimeout(o.timeout),
 				}, o.graceful...)...)
 			},
-			func(in LoggerIn) *health.Checker {
-				return health.New(append([]health.Option{health.WithLogger(in.logger())}, o.health...)...)
+			func(t *telemetry) *health.Checker {
+				return health.New(append(t.health(), o.health...)...)
 			},
 			func() *lifecycleState { return &lifecycleState{timeout: o.timeout} },
 		),
@@ -158,7 +145,7 @@ type kafkaConsumers struct {
 // runs the graceful shutdown phases before any other fx stop hook. It must
 // be the last option passed to fx.New.
 func Ready() fx.Option {
-	return fx.Invoke(func(lc fx.Lifecycle, g *graceful.Manager, checks *health.Checker, state *lifecycleState, in LoggerIn) {
+	return fx.Invoke(func(lc fx.Lifecycle, g *graceful.Manager, checks *health.Checker, state *lifecycleState, t *telemetry) {
 		state.ready.Store(true)
 		lc.Append(fx.Hook{
 			OnStart: func(context.Context) error {
@@ -167,7 +154,7 @@ func Ready() fx.Option {
 			},
 			OnStop: func(ctx context.Context) error {
 				if d, ok := ctx.Deadline(); ok && time.Until(d) < state.timeout {
-					in.logger().Warn("fx stop timeout may be shorter than the graceful shutdown timeout; set fx.StopTimeout",
+					t.logger.Warn("fx stop timeout may be shorter than the graceful shutdown timeout; set fx.StopTimeout",
 						"fx_stop_remaining", time.Until(d).Round(time.Second).String())
 				}
 				return g.Shutdown(ctx)

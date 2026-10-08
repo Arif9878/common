@@ -38,7 +38,6 @@ func connectCtx() (context.Context, context.CancelFunc) {
 
 type postgresIn struct {
 	fx.In
-	LoggerIn
 	Config  postgres.Config
 	Options []postgres.Option `group:"commonfx.postgres.options"`
 }
@@ -48,10 +47,10 @@ type postgresIn struct {
 // readiness checks.
 func Postgres() fx.Option {
 	return fx.Module("commonfx.postgres",
-		fx.Provide(func(in postgresIn, g *graceful.Manager, checks *health.Checker) (*postgres.DB, error) {
+		fx.Provide(func(in postgresIn, g *graceful.Manager, checks *health.Checker, t *telemetry) (*postgres.DB, error) {
 			ctx, cancel := connectCtx()
 			defer cancel()
-			db, err := postgres.New(ctx, in.Config, append([]postgres.Option{postgres.WithLogger(in.logger())}, in.Options...)...)
+			db, err := postgres.New(ctx, in.Config, append(t.postgres(), in.Options...)...)
 			if err != nil {
 				return nil, err
 			}
@@ -63,7 +62,6 @@ func Postgres() fx.Option {
 
 type redisIn struct {
 	fx.In
-	LoggerIn
 	Config  redis.Config
 	Options []redis.Option `group:"commonfx.redis.options"`
 }
@@ -73,10 +71,10 @@ type redisIn struct {
 // readiness checks.
 func Redis() fx.Option {
 	return fx.Module("commonfx.redis",
-		fx.Provide(func(in redisIn, g *graceful.Manager, checks *health.Checker) (*redis.Client, error) {
+		fx.Provide(func(in redisIn, g *graceful.Manager, checks *health.Checker, t *telemetry) (*redis.Client, error) {
 			ctx, cancel := connectCtx()
 			defer cancel()
-			c, err := redis.New(ctx, in.Config, append([]redis.Option{redis.WithLogger(in.logger())}, in.Options...)...)
+			c, err := redis.New(ctx, in.Config, append(t.redis(), in.Options...)...)
 			if err != nil {
 				return nil, err
 			}
@@ -88,7 +86,6 @@ func Redis() fx.Option {
 
 type vaultIn struct {
 	fx.In
-	LoggerIn
 	Config  vault.Config
 	Auth    api.AuthMethod `optional:"true"`
 	Options []vault.Option `group:"commonfx.vault.options"`
@@ -100,10 +97,10 @@ type vaultIn struct {
 func Vault() fx.Option {
 	return fx.Module("commonfx.vault",
 		fx.Provide(
-			func(in vaultIn, g *graceful.Manager) (*vault.Client, error) {
+			func(in vaultIn, g *graceful.Manager, t *telemetry) (*vault.Client, error) {
 				ctx, cancel := connectCtx()
 				defer cancel()
-				opts := append([]vault.Option{vault.WithLogger(in.logger())}, in.Options...)
+				opts := append(t.vault(), in.Options...)
 				if in.Auth != nil {
 					opts = append(opts, vault.WithAuth(in.Auth))
 				}
@@ -120,7 +117,6 @@ func Vault() fx.Option {
 
 type kafkaIn struct {
 	fx.In
-	LoggerIn
 	Config  kafka.Config
 	Options []kafka.Option `group:"commonfx.kafka.options"`
 }
@@ -129,21 +125,14 @@ type kafkaIn struct {
 // and closed in graceful.Drain, after consumers stopped in StopIntake.
 func KafkaProducer() fx.Option {
 	return fx.Module("commonfx.kafka.producer",
-		fx.Provide(func(in kafkaIn, g *graceful.Manager) (*kafka.Producer, error) {
+		fx.Provide(func(in kafkaIn, g *graceful.Manager, t *telemetry) (*kafka.Producer, error) {
 			ctx, cancel := connectCtx()
 			defer cancel()
-			p, err := kafka.NewProducer(ctx, in.Config, append([]kafka.Option{kafka.WithLogger(in.logger())}, in.Options...)...)
+			p, err := kafka.NewProducer(ctx, in.Config, append(t.kafka(), in.Options...)...)
 			if err != nil {
 				return nil, err
 			}
 			return p, g.Register(graceful.Drain, "kafka producer", p.Close)
 		}),
 	)
-}
-
-// KafkaConsumer registers constructor, a function returning
-// (*kafka.Consumer, error), whose consumer [Lifecycle] runs on app start
-// and closes in graceful.StopIntake. Use it once per consumer.
-func KafkaConsumer(constructor any) fx.Option {
-	return fx.Provide(fx.Annotate(constructor, fx.ResultTags(`group:"commonfx.kafka.consumers"`)))
 }

@@ -6,6 +6,7 @@ import (
 	"reflect"
 
 	"go.opentelemetry.io/otel/metric"
+	"go.opentelemetry.io/otel/propagation"
 	"go.opentelemetry.io/otel/trace"
 	"go.uber.org/fx"
 	"go.uber.org/fx/fxevent"
@@ -51,8 +52,9 @@ func ConfigFields[T any]() fx.Option {
 
 // Observability provides *slog.Logger (logging.New), *tracing.Provider and
 // *metrics.Provider (both registered as OpenTelemetry globals, so
-// instrumentation libraries use them), and the trace.TracerProvider and
-// metric.MeterProvider interfaces. It needs logging.Config, tracing.Config
+// instrumentation libraries use them), and the trace.TracerProvider,
+// metric.MeterProvider and propagation.TextMapPropagator interfaces, which
+// every commonfx module passes explicitly to the packages it builds. It needs logging.Config, tracing.Config
 // and metrics.Config in the graph. fx's own events are logged through the
 // same logger at debug level, and the providers are flushed and stopped in
 // graceful.Telemetry, after everything else.
@@ -74,6 +76,7 @@ func Observability() fx.Option {
 				},
 				func(p *tracing.Provider) trace.TracerProvider { return p.TracerProvider() },
 				func(p *metrics.Provider) metric.MeterProvider { return p.MeterProvider() },
+				func() propagation.TextMapPropagator { return tracing.Propagator() },
 			),
 			fx.Invoke(func(g *graceful.Manager, tp *tracing.Provider, mp *metrics.Provider) error {
 				if err := g.Register(graceful.Telemetry, "tracing", tp.Shutdown); err != nil {

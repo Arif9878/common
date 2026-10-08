@@ -120,12 +120,11 @@ func TestFullApplication(t *testing.T) {
 		commonfx.HTTPServer(),
 		commonfx.Redis(),
 		commonfx.KafkaProducer(),
-		commonfx.KafkaConsumer(func(cfg kafka.Config) (*kafka.Consumer, error) {
-			return kafka.NewConsumer(context.Background(), cfg, "billing", []string{"orders"},
-				func(_ context.Context, r *kgo.Record) error {
-					consumed <- string(r.Value)
-					return nil
-				})
+		commonfx.KafkaConsumer("billing", []string{"orders"}, func() kafka.Handler {
+			return func(_ context.Context, r *kgo.Record) error {
+				consumed <- string(r.Value)
+				return nil
+			}
 		}),
 		fx.Provide(fx.Annotate(func(rdb *redis.Client) *http.ServeMux {
 			mux := http.NewServeMux()
