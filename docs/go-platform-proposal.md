@@ -303,15 +303,25 @@ are disabled because it cannot see the route.
   otelgrpc stats handlers. `grpcclient.Dial(target, opts...) (*grpc.ClientConn, error)`
   uses gRPC's native service-config retry policy rather than a custom loop.
 
-### datastore
-- **postgres**: `postgres.New(ctx, cfg, opts...) (*DB, error)`, built on pgxpool.
-  `db.Pool() *pgxpool.Pool` is fetched per call, so do not cache it. Rotation is integrated
-  through `rotation.Rotator[*pgxpool.Pool]`. `pgxpool.Close` already waits for acquired
-  connections, which gives draining for free. Tracing uses `otelpgx` and metrics come from `pool.Stat()`.
-  Static (non-lease) passwords can use the lighter `BeforeConnect` hook instead of a pool swap.
-- **redis**: `redis.New(ctx, cfg, opts...) (redis.UniversalClient, error)`, which covers single,
-  cluster and sentinel. Credential rotation uses go-redis's `CredentialsProviderContext`, so
-  new connections pick up new credentials without swapping the client. Tracing and metrics use `redisotel`.
+### datastore — ✅ implemented
+**postgres** (pgx/v5 pgxpool): `postgres.New(ctx, cfg, opts...)` pings before returning;
+`Exec/Query/QueryRow/Begin/SendBatch` delegate to the current pool, `Pool()` per call.
+`WithCredentials(fetch, revoke)` rotates pools via secret/rotation (`Current()`: pgxpool's
+Close waits for acquired connections; bounded by ctx). `Classify(err)`: ErrNoRows→NotFound,
+23505→Conflict, FK/check/not-null→InvalidArgument, 40001/40P01→Unavailable (retryable),
+57014→Timeout, auth→Unauthorized. sslmode defaults to verify-full; password never in a DSN
+string. Spans via otelpgx (children of the caller's span; SQL text, never parameters); pool
+metrics `db.client.connection.*` observed from the current pool (otelpgx.RecordStats would
+leak a registration per rotated pool). Tested against PostgreSQL 18: 10k+ queries across 3
+rotations with zero failures, an open transaction surviving rotation, revocation after it ends.
+
+**redis** (go-redis/v9): `redis.New` returns `*Client` embedding `UniversalClient`
+(single/cluster/sentinel); lifecycle method is `Stop(ctx)` because go-redis's `Shutdown` sends
+the server SHUTDOWN command. Retries off by default (go-redis retries non-idempotent
+commands). `WithCredentials` feeds new connections through `CredentialsProviderContext`;
+replaced credentials are revoked after `ConnMaxLifetime` (or at Stop). redisotel tracing with
+`WithDBStatement(false)`: arguments can hold personal data. `Classify`: redis.Nil→NotFound,
+WRONGPASS/NOAUTH→Unauthorized, NOPERM→Forbidden, LOADING/BUSY/TRYAGAIN/CLUSTERDOWN→Unavailable.
 
 ### messaging/kafka (franz-go)
 ```go
@@ -399,8 +409,8 @@ type BatchHandler func(ctx, []*kgo.Record) error   // per-partition batch
 
 `go vet`, `staticcheck`/`golangci-lint`, `go test -race -shuffle=on ./...` in every module,
 `govulncheck`, benchmarks for hot paths (`workerpool`, `batch`, logging handler, retry) with
-`benchstat` comparison on PRs, and integration tests with testcontainers-go behind a
-`//go:build integration` tag. Import rules are enforced with `depguard`. Additive changes
+`benchstat` comparison on PRs, and integration tests against real services: CI runs a PostgreSQL service container
+(`POSTGRES_TEST_URL`); Vault uses `-tags integration` with a dev server. Import rules are enforced with `depguard`. Additive changes
 are checked with `gorelease` / `apidiff`.
 
 ---
@@ -423,7 +433,7 @@ Each step is one PR, reviewable on its own.
 | 8 | ✅ `transport/http` (server + client), `echoadapter` | 2–7 |
 | 9 | ✅ `secret`, `secret/rotation` | 6 |
 | 10 | ✅ `secret/vault` | 9 |
-| 11 | `datastore/postgres`, `datastore/redis` | 9 |
+| 11 | ✅ `datastore/postgres`, `datastore/redis` | 9 |
 | 12 | `transport/grpc` | 2–6 |
 | 13 | `messaging/kafka` | 6, 7 |
 | 14 | `idempotency` (+ pg/redis stores), `lock`, `featureflag` | 11 |

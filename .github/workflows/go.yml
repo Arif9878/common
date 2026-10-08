@@ -19,6 +19,17 @@ jobs:
       matrix:
         go: ["1.26.x", "1.27.x"]
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: app
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd pg_isready --health-interval 2s --health-timeout 5s --health-retries 15
+    env:
+      POSTGRES_TEST_URL: postgres://postgres:postgres@localhost:5432/app
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-go@v6
