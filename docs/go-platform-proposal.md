@@ -335,27 +335,29 @@ replaced credentials are revoked after `ConnMaxLifetime` (or at Stop). redisotel
 `WithDBStatement(false)`: arguments can hold personal data. `Classify`: redis.Nil→NotFound,
 WRONGPASS/NOAUTH→Unauthorized, NOPERM→Forbidden, LOADING/BUSY/TRYAGAIN/CLUSTERDOWN→Unavailable.
 
-### messaging/kafka (franz-go)
+### messaging/kafka (franz-go) — ✅ implemented
 ```go
-c, _ := kafka.NewConsumer(cfg, kafka.HandleBatch(h), kafka.WithConcurrency(8), kafka.WithDLQ(producer, "x.dlq"))
-type Handler      func(ctx, *kgo.Record) error
-type BatchHandler func(ctx, []*kgo.Record) error   // per-partition batch
+p, _ := kafka.NewProducer(ctx, cfg)                 // acks=all + idempotent, bounded buffer, snappy
+p.Publish(ctx, recs...) / p.PublishAsync(ctx, r, done) / p.Close(ctx)   // Close: flush then close
+c, _ := kafka.NewConsumer(ctx, cfg, group, topics, handler, opts...)    // or NewBatchConsumer
+c.Run(ctx); c.Close(ctx)                             // Run under graceful.Go; Close in StopIntake
+kafka.Typed(kafka.JSON[T]{}, h) / kafka.Encode(topic, key, v, kafka.JSON[T]{})
 ```
-- **Delivery**: at-least-once. Offsets are committed only after the handler succeeds, or
-  after a record is sent to the DLQ, using `kgo.DisableAutoCommit` and marked-offset commits.
-- **Ordering**: preserved per partition. Each partition is handled by at most one worker at a
-  time, and concurrency is across partitions. Optional key-hash sub-partitioning gives
-  per-key ordering with more parallelism.
-- **Backpressure**: polling pauses (`PauseFetchPartitions`) when a partition's in-flight buffer is full.
-- **Rebalance**: on revoke, stop dispatching, wait up to `RevokeTimeout` for in-flight work,
-  commit what is done, then release. A record whose work was cut off is redelivered.
-- **Partial batch failure**: the commit advances only to the last contiguous success. Later
-  records in that batch are retried (and may be redelivered); this is documented.
-- **Retry**: bounded in-process retry for retryable kinds, then the DLQ (if configured) or
-  stopping that partition. Partitions are never skipped silently.
-- Producer: `Produce(ctx, topic, key, value)` (sync) and `ProduceAsync(..., cb)`, with a
-  `Serializer[T]` abstraction, `acks` from config, and trace context injected into headers through `kotel`.
-- `Client() *kgo.Client` is exposed for advanced use.
+Records are `*kgo.Record` throughout (no wrapper type hiding Kafka concepts). One worker
+goroutine per assigned partition (ordering per partition), a shared semaphore capping
+handler calls (`WithConcurrency`, default 8), bounded per-partition buffers so polling waits
+(backpressure). At-least-once: offsets are marked only after success or DLQ, committed every
+5s, synchronously on revoke and Close. Exhausted/non-retryable records go to `WithDLQ`
+(headers: original topic/partition/offset, error kind, error); without a DLQ the **partition is
+paused**, never silently skipped (`WithSkipOnFailure` opts in). On revoke, in-flight handlers
+finish (bounded), retry loops are abandoned, offsets committed, workers that overrun the
+timeout can no longer mark offsets. Batch handlers report partial progress with
+`*BatchError{Processed}`. kotel for spans (producer → consumer trace continues) and client
+metrics; `kafka.consumer.records`, `.process.duration`, `.batch.size`, `.lag` (per partition),
+`.partitions.stopped`. Tests run on franz-go's in-process `kfake` cluster, with mutation
+checks for ordering, the concurrency cap, and not committing failed records.
+Not yet done: a real-broker CI job (tests use fixed topic names; they need per-test topic
+isolation first).
 
 ### coordination
 - **idempotency**: `Do[T](ctx, store, key, fn, opts...)`.
@@ -447,7 +449,7 @@ Each step is one PR, reviewable on its own.
 | 10 | ✅ `secret/vault` | 9 |
 | 11 | ✅ `datastore/postgres`, `datastore/redis` | 9 |
 | 12 | ✅ `transport/grpc` | 2–6 |
-| 13 | `messaging/kafka` | 6, 7 |
+| 13 | ✅ `messaging/kafka` | 6, 7 |
 | 14 | `idempotency` (+ pg/redis stores), `lock`, `featureflag` | 11 |
 
 Steps 1–7 alone are enough for a service to adopt logging, config, shutdown and
