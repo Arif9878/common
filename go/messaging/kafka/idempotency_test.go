@@ -131,6 +131,7 @@ func TestIdempotencyBatchSkipsDuplicatesAndKeepsPartialProgress(t *testing.T) {
 
 	var got seen
 	var once sync.Once
+	mp, metrics := testkit.NewMetrics(t)
 	c, err := kafka.NewBatchConsumer(ctx, k.cfg, k.G("g"), []string{k.T("t")},
 		func(_ context.Context, rs []*kgo.Record) error {
 			var err error
@@ -145,7 +146,7 @@ func TestIdempotencyBatchSkipsDuplicatesAndKeepsPartialProgress(t *testing.T) {
 			}
 			return err
 		},
-		quiet, kafka.WithBatchSize(10), kafka.WithBatchTimeout(300*time.Millisecond),
+		quiet, kafka.WithBatchSize(10), kafka.WithBatchTimeout(300*time.Millisecond), kafka.WithMeterProvider(mp),
 		kafka.WithIdempotency(kafka.Idempotency{Store: store, Key: func(g string, r *kgo.Record) string {
 			if string(r.Value) == "3" {
 				return "" // no key: only the consumer's offsets keep it from being handled twice
@@ -175,6 +176,15 @@ func TestIdempotencyBatchSkipsDuplicatesAndKeepsPartialProgress(t *testing.T) {
 		if n := got.get(v); n != 0 {
 			t.Errorf("duplicate record %s handled %d times", v, n)
 		}
+	}
+	// "5" is seen on the first attempt and again on the retry; it is one
+	// duplicate record.
+	testkit.Eventually(t, 10*time.Second, "the duplicates metric", func() bool {
+		return metrics.Has("kafka.consumer.duplicates") && metrics.Sum("kafka.consumer.duplicates") >= 2
+	})
+	time.Sleep(100 * time.Millisecond)
+	if n := metrics.Sum("kafka.consumer.duplicates"); n != 2 {
+		t.Errorf("kafka.consumer.duplicates = %v, want 2", n)
 	}
 	got.mu.Lock()
 	defer got.mu.Unlock()
@@ -296,6 +306,58 @@ func TestIdempotencyDuplicatesWithinOneBatch(t *testing.T) {
 	for i := range 10 {
 		if n := got.get(strconv.Itoa(i)); n != 1 {
 			t.Errorf("event %d handled %d times, want 1", i, n)
+		}
+	}
+}
+
+func TestIdempotencyBatchErrorAfterSkippedDuplicate(t *testing.T) {
+	k := newKafka(t, 1, "t")
+	store := newRedisStore(t)
+	ctx := context.Background()
+	if _, err := idempotency.Do(ctx, store, byValue("", &kgo.Record{Value: []byte("0")}),
+		func(context.Context) (int, error) { return 0, nil }); err != nil {
+		t.Fatal(err)
+	}
+	publish(t, newProducer(t, k.cfg), k.T("t"), "k", "0", "k", "poison", "k", "2")
+
+	// The handler gets [poison 2] and reports BatchError{Processed: 0}: the
+	// failed record is "poison", not the duplicate "0" before it.
+	var h failAtPoison
+	mp, metrics := testkit.NewMetrics(t)
+	c, err := kafka.NewBatchConsumer(ctx, k.cfg, k.G("g"), []string{k.T("t")}, h.handle,
+		append(batchOpts(), kafka.WithSkipOnFailure(), kafka.WithMeterProvider(mp),
+			kafka.WithIdempotency(kafka.Idempotency{Store: store, Key: byValue}))...)
+	if err != nil {
+		t.Fatal(err)
+	}
+	running(t, c)
+	testkit.Eventually(t, 30*time.Second, "record 2", func() bool { return slices.Contains(h.snapshot(), "2") })
+	if n := metrics.Sum("kafka.consumer.records", attribute.String("outcome", "skipped")); n != 1 {
+		t.Errorf("skipped = %v, want 1 (only poison)", n)
+	}
+}
+
+func TestIdempotencyFailedFirstCopyIsNotCountedAsDuplicate(t *testing.T) {
+	k := newKafka(t, 1, "t")
+	// Two copies of the same failing event in one batch: the second copy is
+	// a duplicate only until the first fails, then it is handled itself.
+	publish(t, newProducer(t, k.cfg), k.T("t"), "k", "poison", "k", "poison", "k", "2")
+	var h failAtPoison
+	mp, metrics := testkit.NewMetrics(t)
+	c, err := kafka.NewBatchConsumer(context.Background(), k.cfg, k.G("g"), []string{k.T("t")}, h.handle,
+		append(batchOpts(), kafka.WithSkipOnFailure(), kafka.WithMeterProvider(mp),
+			kafka.WithIdempotency(kafka.Idempotency{Store: newRedisStore(t), Key: byValue}))...)
+	if err != nil {
+		t.Fatal(err)
+	}
+	running(t, c)
+	testkit.Eventually(t, 30*time.Second, "record 2", func() bool { return slices.Contains(h.snapshot(), "2") })
+	if n := metrics.Sum("kafka.consumer.records", attribute.String("outcome", "skipped")); n != 2 {
+		t.Errorf("skipped = %v, want 2 (both copies failed)", n)
+	}
+	if metrics.Has("kafka.consumer.duplicates") {
+		if n := metrics.Sum("kafka.consumer.duplicates"); n != 0 {
+			t.Errorf("kafka.consumer.duplicates = %v, want 0", n)
 		}
 	}
 }
