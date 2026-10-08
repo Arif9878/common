@@ -1,0 +1,48 @@
+version: "2"
+
+linters:
+  default: standard # errcheck, govet, ineffassign, staticcheck, unused
+  enable:
+    - bodyclose
+    - depguard
+    - errorlint
+    - gosec
+    - misspell
+    - noctx
+  settings:
+    depguard:
+      rules:
+        production:
+          files:
+            - "!$test"
+          deny:
+            - pkg: github.com/Arif9878/common/go/testkit
+              desc: production packages must not depend on testkit
+        all:
+          deny:
+            - pkg: github.com/satori/go.uuid
+              desc: unmaintained; use github.com/google/uuid
+            - pkg: github.com/sirupsen/logrus
+              desc: use log/slog
+            - pkg: github.com/lib/pq
+              desc: use github.com/jackc/pgx/v5
+  exclusions:
+    presets:
+      - std-error-handling
+    # Legacy v0 packages are frozen and will be removed at v1.0; see
+    # docs/go-platform-proposal.md §10. Do not add new code here.
+    paths:
+      - ^constant/
+      - ^http/
+      - ^logger/
+      - ^observability/[^/]+\.go$
+      - ^utils/
+
+formatters:
+  enable:
+    - gofmt
+    - goimports
+  settings:
+    goimports:
+      local-prefixes:
+        - github.com/Arif9878/common/go
