@@ -204,20 +204,24 @@ lim.Allow() bool; lim.Wait(ctx) error               // Wait bounded (1s default)
 Composition is explicit: retry outside, breaker inside. Distributed rate limiting is
 deferred to the redis module.
 
-### concurrency
+### concurrency — ✅ implemented
 ```go
-pool := workerpool.New(workerpool.WithWorkers(20), workerpool.WithQueueSize(1000))
-pool.Submit(ctx, task) error     // blocks until queue space or ctx done (backpressure)
-pool.TrySubmit(task) error       // ErrQueueFull immediately
-pool.Shutdown(ctx) error         // stop intake, drain, give up at ctx deadline
+pool := workerpool.New("thumbnails", workerpool.WithWorkers(20), workerpool.WithQueueSize(1000))
+pool.Submit(ctx, task) error     // blocks while full (backpressure); ctx error or ErrClosed
+pool.TrySubmit(ctx, task) error  // ErrQueueFull immediately (kind Unavailable)
+pool.Shutdown(ctx) error         // graceful.Hook: stop intake, drain; at deadline cancel + drop queued
+//   task ctx = submitter's values, pool's cancellation; panics recovered; errors → WithOnError
 
-p := batch.New[T](handler, batch.WithSize(500), batch.WithFlushInterval(time.Second))
-p.Add(ctx, item) error           // blocks when the pending buffer is full (bounded memory)
-p.Flush(ctx) error; p.Close(ctx) error
-type Handler[T any] func(ctx context.Context, items []T) error
-// Partial failure: handler may return batch.PartialError{Failed: []int{...}}; failed items
-// go to an OnFailure hook. They are NOT re-queued automatically (no unbounded growth).
+p := batch.New("audit", handler, batch.WithSize(500), batch.WithFlushInterval(time.Second))
+p.Add(ctx, item) error           // blocks at WithMaxPending (default 2×size): bounded memory
+p.Flush(ctx) error; p.Close(ctx) error   // Close is a graceful.Hook
+//   flush on size / oldest-item age / Flush / Close; handler errors or *PartialError{Failed}
+//   → WithOnFailure hook (no automatic requeue); order preserved at flush concurrency 1
 ```
+The handler is a required argument of `batch.New`, not a `WithHandler` option as in the
+original spec, so a processor without one cannot be constructed. Fixed workers, never a
+goroutine per task (tested); a Submit racing Shutdown is either rejected or run, never lost
+(tested, including a mutation check that the test catches the bug).
 
 ### lifecycle / health — ✅ implemented
 ```go
@@ -400,7 +404,7 @@ Each step is one PR, reviewable on its own.
 | 4 | ✅ `config` | 1 |
 | 5 | ✅ `lifecycle/graceful`, `health` | 2 |
 | 6 | ✅ `resilience/retry`, `circuitbreaker`, `ratelimit` | 1 |
-| 7 | `concurrency/workerpool`, `batch` | 1 |
+| 7 | ✅ `concurrency/workerpool`, `batch` | 1 |
 | 8 | `transport/http` (server + client), `echoadapter` | 2–7 |
 | 9 | `secret`, `secret/rotation` | 6 |
 | 10 | `secret/vault` | 9 |
