@@ -129,19 +129,26 @@ Forbidden edges are enforced in CI (§8). Examples: `retry → kafka`, `batch �
 
 These signatures are for review, not final.
 
-### errors (classification, not catalogue)
+### errors (classification, not catalogue) — ✅ implemented
 ```go
 type Kind uint8
-const ( KindUnknown Kind = iota; InvalidArgument; NotFound; Conflict; Unauthenticated
-        PermissionDenied; Timeout; Unavailable; RateLimited; Internal )
+const ( Unknown Kind = iota; InvalidArgument; NotFound; Conflict; Unauthorized; Forbidden
+        Timeout; Unavailable; RateLimited; Canceled; Internal )
 
-func New(kind Kind, msg string) error
-func Wrap(err error, kind Kind, msg string) error   // keeps err for Is/As/Unwrap
-func KindOf(err error) Kind                         // walks the chain; ctx errors → Timeout/Unavailable
-func IsRetryable(err error) bool                    // Timeout, Unavailable, RateLimited
-func WithSafeMessage(err error, msg string) error   // message that may be returned to clients
-// Re-exports Is, As, Unwrap, Join so importing this package does not shadow stdlib.
+func (k Kind) New(msg string) error                  // errors.NotFound.New("order not found")
+func (k Kind) Errorf(format string, args ...any) error // %w supported
+func (k Kind) Wrap(err error, msg string) error      // nil in → nil out; keeps err for Is/As
+func (k Kind) String() string                        // "not_found": log field / metric label
+func KindOf(err error) Kind     // outermost classification wins; ctx.Canceled → Canceled,
+                                // DeadlineExceeded / Timeout() → Timeout; else Unknown
+func IsRetryable(err error) bool                     // Timeout, Unavailable, RateLimited
+func WithPublicMessage(err error, msg string) error  // text safe to return to callers
+func PublicMessage(err error) string                 // explicit message or generic per Kind; never err.Error()
+// Re-exports New, Is, As, AsType, Unwrap, Join, ErrUnsupported from stdlib.
 ```
+Constructors hang off `Kind` so that `errors.New` keeps its standard-library meaning.
+`Canceled` was added beyond the original list, so client cancellations are neither
+retried nor reported as server errors.
 Mapping lives in the transports (`transport/http.StatusFor(err)`, `transport/grpc.StatusFor(err)`),
 not in `errors`, so `errors` stays dependency-free.
 
@@ -363,7 +370,7 @@ Each step is one PR, reviewable on its own.
 |---|---|---|
 | 0 | ✅ `go 1.26`, dependency upgrade (clears 7 of 8 reachable vulns), CI (`.github/workflows/go.yml`), `go/Makefile`, `go/.golangci.yml` (legacy paths excluded, depguard rules) | — |
 | 0b | ✅ Legacy JWT middleware: `jwt` v3 → v5 (GO-2025-3553, no v3 fix) and signing key via parameter instead of `"secret"`, `APP_ENV=test` auth bypass removed | 0 |
-| 1 | `errors` | 0 |
+| 1 | ✅ `errors` | 0 |
 | 2 | `observability/logging`, `requestid` | 1 |
 | 3 | `observability/tracing`, `observability/metrics` (replaces broken `observability`) | 2 |
 | 4 | `config` | 1 |
