@@ -36,6 +36,7 @@ jobs:
         with:
           go-version: ${{ matrix.go }}
           cache-dependency-path: go/go.sum
+          check-latest: true # security fixes ship as patch releases
       - run: make tidy vet test
       - run: make -C fx tidy vet test
 
@@ -47,6 +48,7 @@ jobs:
         with:
           go-version: "1.27.x"
           cache-dependency-path: go/go.sum
+          check-latest: true # security fixes ship as patch releases
       - run: make lint
       - run: make -C fx lint
 
@@ -58,6 +60,7 @@ jobs:
         with:
           go-version: "1.27.x"
           cache-dependency-path: go/go.sum
+          check-latest: true # security fixes ship as patch releases
       - run: make vuln
       - run: make -C fx vuln
 
@@ -71,6 +74,7 @@ jobs:
         with:
           go-version: "1.27.x"
           cache-dependency-path: go/go.sum
+          check-latest: true # security fixes ship as patch releases
       - name: Start Redpanda
         run: |
           docker run -d --name redpanda -p 9092:9092 redpandadata/redpanda:v26.2.4 \
