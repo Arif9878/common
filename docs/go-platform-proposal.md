@@ -215,18 +215,27 @@ type Handler[T any] func(ctx context.Context, items []T) error
 // go to an OnFailure hook. They are NOT re-queued automatically (no unbounded growth).
 ```
 
-### lifecycle / health
+### lifecycle / health — ✅ implemented
 ```go
-g := graceful.New(graceful.WithTimeout(30*time.Second), graceful.WithSignals(syscall.SIGTERM, os.Interrupt))
-g.Add(phase graceful.Phase, name string, stop func(context.Context) error)
-// Phases run in order: Unready → StopIntake → Drain → FlushTelemetry → CloseDeps
-g.Wait() error    // blocks for signal or Shutdown(); runs phases once; errors.Join of all failures
+g := graceful.New(graceful.WithTimeout(25*time.Second), graceful.WithUnreadyDelay(5*time.Second))
+g.Register(phase graceful.Phase, name string, hook func(context.Context) error) error
+// Phases: Unready → (delay) → StopIntake → Drain → CloseDeps → Telemetry
+g.Go(name, serve func() error) // early exit of a component triggers shutdown and becomes the cause
+g.Wait(ctx) error              // signal / ctx / failure → run phases once → errors.Join of everything
+g.Shutdown(ctx) error          // idempotent; all callers get the same result
 
-h := health.New(health.WithMaxConcurrency(4))
-h.AddReadiness("postgres", check, health.WithTimeout(time.Second), health.Critical())
-h.LiveHandler(), h.ReadyHandler()   // live never runs dependency checks
-h.SetReady(false)                   // flipped by graceful's Unready phase
+h := health.New(health.WithMaxConcurrency(4), health.WithCacheTTL(time.Second))
+h.AddReadiness("postgres", check, health.WithTimeout(time.Second), health.NonCritical())
+h.AddLiveness(name, inProcessCheck)  // never external dependencies
+h.MarkStarted(); h.Drain(ctx)         // Drain is a graceful.Hook for the Unready phase
+h.LiveHandler(), h.ReadyHandler(), h.StartupHandler()
 ```
+Telemetry is the last phase (the original spec flushed it before closing dependencies),
+so logs and spans emitted while closing dependencies are exported. Hooks within a phase
+run concurrently. After the deadline, unfinished hooks are named in a timeout error and
+remaining phases are skipped (also named); a second signal has the same effect.
+Health checks: probes share one run and cache it; at most one invocation per check in
+flight, so a hung check cannot leak goroutines; responses expose only the error kind.
 
 ### secret / rotation / vault
 ```go
@@ -385,7 +394,7 @@ Each step is one PR, reviewable on its own.
 | 2 | ✅ `observability/logging`, `requestid` | 1 |
 | 3 | ✅ `observability/tracing`, `observability/metrics` (legacy `logger`, `observability` marked Deprecated) | 2 |
 | 4 | ✅ `config` | 1 |
-| 5 | `lifecycle/graceful`, `health` | 2 |
+| 5 | ✅ `lifecycle/graceful`, `health` | 2 |
 | 6 | `resilience/retry`, `circuitbreaker`, `ratelimit` | 1 |
 | 7 | `concurrency/workerpool`, `batch` | 1 |
 | 8 | `transport/http` (server + client), `echoadapter` | 2–7 |
