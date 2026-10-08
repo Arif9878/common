@@ -11,8 +11,9 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/Arif9878/common/go/logger"
 	"github.com/labstack/echo/v4"
+
+	"github.com/Arif9878/common/go/logger"
 )
 
 const (
