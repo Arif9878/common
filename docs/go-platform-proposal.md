@@ -297,11 +297,23 @@ Routes are templates: resolved from `*http.ServeMux` via `mux.Handler(r)` (the m
 query strings, headers, bodies. Server metrics use semconv names; otelhttp's server metrics
 are disabled because it cannot see the route.
 
-**gRPC** (step 12):
-- **grpc**: `grpcserver.New(opts...) *grpc.Server` returns the native server; nothing is hidden.
-  Interceptors come from go-grpc-middleware v2 (recovery, logging, auth, selector) plus
-  otelgrpc stats handlers. `grpcclient.Dial(target, opts...) (*grpc.ClientConn, error)`
-  uses gRPC's native service-config retry policy rather than a custom loop.
+**gRPC — ✅ implemented** (`transport/grpc/grpcserver`, `grpcclient`, `grpcstatus`)
+```go
+srv := grpcserver.New(grpcserver.WithLogger(l), grpcserver.WithHealth(checks), grpcserver.WithAuth(fn, public...))
+grpcserver.Serve(shutdown, srv, ":9090")   // native *grpc.Server; GracefulStop, Stop at deadline
+conn, _ := grpcclient.New(target, grpcclient.WithRetry(grpcclient.RetryPolicy{MaxAttempts: 3}))
+grpcstatus.ToStatus(err) / FromStatus(err) / CodeFor(kind) / KindFor(code)
+```
+All interceptors on by default (the spec's opt-in `WithRecovery/WithTracing/...` would make
+forgetting recovery possible): otelgrpc stats handler → observe (request ID, access log,
+error mapping) → recover → auth. Errors cross service boundaries with their kind: the server
+sends the kind's code and only the public message; the client classifies by code while
+keeping the original status (own error type with `GRPCStatus()`, because `status.FromError`
+otherwise rewrites the message). The request ID is echoed as a **trailer**: a header commits
+the call and silently disables gRPC retries. Client: TLS by default (`WithInsecure` explicit),
+10s default deadline, native service-config retries on UNAVAILABLE only. Own interceptors
+instead of go-grpc-middleware: a few dozen lines, consistent with the HTTP side, one fewer
+dependency. Health service (`grpc.health.v1`) answers from readiness.
 
 ### datastore — ✅ implemented
 **postgres** (pgx/v5 pgxpool): `postgres.New(ctx, cfg, opts...)` pings before returning;
@@ -434,7 +446,7 @@ Each step is one PR, reviewable on its own.
 | 9 | ✅ `secret`, `secret/rotation` | 6 |
 | 10 | ✅ `secret/vault` | 9 |
 | 11 | ✅ `datastore/postgres`, `datastore/redis` | 9 |
-| 12 | `transport/grpc` | 2–6 |
+| 12 | ✅ `transport/grpc` | 2–6 |
 | 13 | `messaging/kafka` | 6, 7 |
 | 14 | `idempotency` (+ pg/redis stores), `lock`, `featureflag` | 11 |
 
