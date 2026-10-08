@@ -60,8 +60,9 @@ packages next to it, and remove the old ones after services migrate (§9).
 
 > **Update (2026-10-08): `go/fx` is a separate module** (`github.com/Arif9878/common/go/fx`,
 > package `commonfx`), so fx, dig and zap stay out of services that do not use fx. Local
-> development uses `go.work` at the repository root; `go/fx/go.mod` has a `replace` to `../`
-> that consumers ignore. **Release step:** tag the core (`go/vX.Y.Z`) first, set the core
+> development and CI build it against the core in this repository through a `replace` to `../`
+> in `go/fx/go.mod`, which consumers ignore (no `go.work` needed; the repository's `.gitignore`
+> excludes it). **Release step:** tag the core (`go/vX.Y.Z`) first, set the core
 > `require` in `go/fx/go.mod` to that tag, then tag `go/fx/vX.Y.Z`.
 >
 > **Decision (2026-10-08): single module until v1.0.** The layout below is the
