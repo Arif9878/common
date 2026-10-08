@@ -1,29 +1,35 @@
+// Package middleware holds legacy Echo middleware.
+//
+// Deprecated: use echoadapter.Middleware from
+// github.com/Arif9878/common/go/transport/http/echoadapter (request ID,
+// tracing, metrics, logging, recovery) and httpserver.Auth for
+// authentication. This package will be removed in v1.0.
 package middleware
 
 import (
 	"context"
 	"errors"
 	"net/http"
-	"os"
 	"strings"
 
 	"github.com/go-oauth2/oauth2/v4/generates"
-	"github.com/golang-jwt/jwt"
+	"github.com/golang-jwt/jwt/v5"
 	"github.com/labstack/echo/v4"
 	uuid "github.com/satori/go.uuid"
 )
 
-// ValidateBearerToken from request
-func ValidateBearerToken() echo.MiddlewareFunc {
+// ValidateBearerToken verifies an HMAC-signed JWT access token from the request
+// using key. On success the parsed *jwt.Token (github.com/golang-jwt/jwt/v5)
+// is stored in the echo context under "token".
+//
+// It panics if key is empty.
+func ValidateBearerToken(key []byte) echo.MiddlewareFunc {
+	if len(key) == 0 {
+		panic("middleware: ValidateBearerToken requires a non-empty signing key")
+	}
+
 	return func(next echo.HandlerFunc) echo.HandlerFunc {
 		return func(c echo.Context) error {
-
-			// Ignore check authentication in test
-			env := os.Getenv("APP_ENV")
-			if env == "test" {
-				return next(c)
-			}
-
 			// Parse and verify jwt access token
 			auth, ok := bearerAuth(c.Request())
 			if !ok {
@@ -33,7 +39,7 @@ func ValidateBearerToken() echo.MiddlewareFunc {
 				if _, ok := t.Method.(*jwt.SigningMethodHMAC); !ok {
 					return nil, echo.NewHTTPError(http.StatusUnauthorized, errors.New("parse signing method error"))
 				}
-				return []byte("secret"), nil
+				return key, nil
 			})
 			if err != nil {
 				return echo.NewHTTPError(http.StatusUnauthorized, err)

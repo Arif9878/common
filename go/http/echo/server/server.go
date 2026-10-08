@@ -1,3 +1,9 @@
+// Package server holds the legacy Echo server setup.
+//
+// Deprecated: use httpserver.NewServer and httpserver.Serve from
+// github.com/Arif9878/common/go/transport/http/httpserver, with
+// github.com/Arif9878/common/go/transport/http/echoadapter for Echo. This
+// package will be removed in v1.0.
 package server
 
 import (

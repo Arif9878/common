@@ -1,3 +1,8 @@
+// Package logger is a logrus-based logger.
+//
+// Deprecated: use log/slog with
+// github.com/Arif9878/common/go/observability/logging. This package will be
+// removed in v1.0.
 package logger
 
 import (

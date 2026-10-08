@@ -1,3 +1,8 @@
+// Package observability is the legacy tracing setup.
+//
+// Deprecated: it never exports spans and Tracer.Start does not create one.
+// Use github.com/Arif9878/common/go/observability/tracing. This package will
+// be removed in v1.0.
 package observability
 
 import (
