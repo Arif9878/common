@@ -106,3 +106,23 @@ x/x.go:3:4: undefined: errors.Fields`, false},
 		}
 	}
 }
+
+func TestAfterTagVerdict(t *testing.T) {
+	const summary = "\n# summary\nCannot suggest a release version.\nCan only suggest a release version when compared against the most recent version of this major: v0.7.0.\n"
+	tests := map[string]struct {
+		out, version string
+		ok           bool
+	}{
+		"compatible":              {"# example.com/m/grpcserver\n## compatible changes\nBearer: added\n" + summary, "v0.7.0", true},
+		"no changes":              {summary, "v0.7.0", true},
+		"incompatible in a minor": {"## incompatible changes\nFoo: removed\n" + summary, "v0.7.0", true},
+		"incompatible in a patch": {"## incompatible changes\nFoo: removed\n" + summary, "v0.6.2", false},
+		"load errors":             {"## errors in release version:\nx.go:1:2: undefined: errors.Fields\n" + summary, "v0.7.0", false},
+		"gorelease failed to run": {"go: downloading …\nexit status 1", "v0.7.0", false},
+	}
+	for name, tc := range tests {
+		if _, ok := afterTagVerdict(tc.out, "v0.6.1", tc.version); ok != tc.ok {
+			t.Errorf("%s: ok = %v, want %v", name, ok, tc.ok)
+		}
+	}
+}
