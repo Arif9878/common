@@ -78,3 +78,24 @@ func TestEchoServer(t *testing.T) {
 		t.Error("server still serving after stop")
 	}
 }
+
+func TestAdminServerHasNoPprofByDefault(t *testing.T) {
+	addr := testkit.FreeAddr(t)
+	app := fxtest.New(t,
+		fx.Supply(commonfx.AdminConfig{Addr: addr}),
+		commonfx.Lifecycle(),
+		commonfx.AdminServer(),
+		commonfx.Ready(),
+	)
+	app.RequireStart()
+	defer app.RequireStop()
+	req, _ := http.NewRequestWithContext(context.Background(), http.MethodGet, "http://"+addr+"/debug/pprof/", nil)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusNotFound {
+		t.Errorf("/debug/pprof/ without ADMIN_PPROF = %d, want 404", resp.StatusCode)
+	}
+}

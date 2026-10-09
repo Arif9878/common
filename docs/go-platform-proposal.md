@@ -404,6 +404,16 @@ is still waiting for an unreachable cluster. Metrics: `outbox.records.published`
 kfake: commit/rollback, header handling, NOTIFY wake-up, three relays (each record once, in
 order), a failing topic, and Stop releasing the lock; mutation-checked.
 
+### observability/dashboards and profiling — ✅ implemented
+A Grafana dashboard (`grafana/service-overview.json`, 42 panels selected by `$job`/`$instance`)
+and 18 Prometheus alerting rules (`prometheus/alerts.yaml`, grouped by `job`, with severity and
+annotations) for the library's metrics, embedded in `dashboards.FS`. The test scans every
+module's source for instrument registrations (plus otelhttp, otelgrpc and the OTel runtime
+metrics), creates them on a real Prometheus provider, scrapes the exposed names and checks that
+every query reads only those, with a `$job` selector per metric. `observability/profiling`
+registers net/http/pprof on a mux; `ADMIN_PPROF=true` serves it on the fx admin port, for go tool
+pprof and Grafana Alloy's `pyroscope.scrape`.
+
 ### coordination — ✅ implemented
 **idempotency**: `idempotency.Do[T](ctx, store, key, fn, opts...)` / `DoOutcome` (reports
 `Duplicate`). Claim with lease (5m) → run → store result (24h) / release on failure; in-progress

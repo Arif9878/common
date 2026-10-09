@@ -222,6 +222,54 @@ spec:
 - **Push interval:** metrics are pushed every `METRICS_EXPORT_INTERVAL` (60s by default).
 - **Moving between backends:** `METRICS_EXPORTER=prometheus,otlp` serves `/metrics` and pushes at the same time, so you can run both while you switch.
 
+## Dashboards, alerts and profiling
+
+[`go/observability/dashboards`](go/observability/dashboards) ships ready-made views and alerts for the metrics the packages emit:
+
+- **[`grafana/service-overview.json`](go/observability/dashboards/grafana/service-overview.json):** a Grafana dashboard with panels for:
+  - HTTP and gRPC servers: rate, errors, latency by route and method
+  - outgoing HTTP and gRPC calls
+  - Kafka: consumed records by outcome, lag, stopped partitions, duplicates, producer errors
+  - the outbox: published, publish lag, relay failures, active relays
+  - the PostgreSQL pool
+  - circuit breakers, retries, rate limiters and idempotency
+  - the Go runtime
+
+  Pick the service with the `job` variable. Prometheus sets `job` when it scrapes; Mimir and Grafana Cloud derive it from `service.name` for OTLP.
+- **[`prometheus/alerts.yaml`](go/observability/dashboards/prometheus/alerts.yaml):** 18 alerting rules, each grouped by `job`, with a severity, summary and description:
+  - HTTP/gRPC error rate and latency
+  - stopped Kafka partitions, consumer lag, dead-lettering, produce errors
+  - a failing relay, no active relay, outbox lag
+  - pool exhaustion and saturation
+  - open breakers, exhausted retries, idempotency store errors
+  - expiring Vault tokens and credentials, failing rotation
+
+  Load it as a rule file, or as a PrometheusRule's `spec.groups` with the Prometheus Operator. The thresholds are starting points.
+
+A test runs every query against the metric names the packages actually register, so a renamed metric breaks the build instead of leaving an empty panel or an alert that never fires. The files are also embedded in `dashboards.FS`, for provisioning tools.
+
+**Profiling.**
+
+- **Enabling it:** set `ADMIN_PPROF=true` (or call `profiling.Register(adminMux)` without fx). The admin port then serves `/debug/pprof/`, for `go tool pprof http://pod:9090/debug/pprof/profile`.
+- **Continuous profiling:** Grafana Alloy can scrape the same endpoint into Grafana Pyroscope, so the service needs no SDK:
+
+```alloy
+pyroscope.scrape "services" {
+  targets    = [{"__address__" = "orders:9090", "service_name" = "orders"}] // or discovery.kubernetes
+  forward_to = [pyroscope.write.default.receiver]
+  profiling_config {
+    profile.process_cpu { enabled = true }
+    profile.memory      { enabled = true }
+    profile.goroutine   { enabled = true }
+  }
+}
+pyroscope.write "default" {
+  endpoint { url = "http://pyroscope:4040" }
+}
+```
+
+Keep the admin port private: profiles reveal the program's internals.
+
 ## Versions and modules
 
 The core module holds the light packages. Each heavy integration is its own module, so a service only downloads and builds the dependencies it uses: pgx, go-redis, franz-go, the Vault API, the gRPC server and client packages, and Uber fx. Core still depends on the gRPC library itself, because its OTLP exporters can send over gRPC.

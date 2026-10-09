@@ -92,6 +92,7 @@ func TestFullApplication(t *testing.T) {
 		"LOG_LEVEL":     "error",
 		"HTTP_ADDR":     httpAddr,
 		"ADMIN_ADDR":    adminAddr,
+		"ADMIN_PPROF":   "true",
 		"REDIS_ADDRS":   m.Addr(),
 		"KAFKA_BROKERS": strings.Join(cluster.ListenAddrs(), ","),
 	}
@@ -151,6 +152,9 @@ func TestFullApplication(t *testing.T) {
 	}
 	if code, _ := get(t, "http://"+adminAddr+"/ready"); code != 200 {
 		t.Fatalf("/ready = %d after start", code)
+	}
+	if code, body := get(t, "http://"+adminAddr+"/debug/pprof/goroutine?debug=1"); code != 200 || !strings.Contains(body, "goroutine profile") {
+		t.Errorf("/debug/pprof with ADMIN_PPROF = %d", code)
 	}
 	if code, body := get(t, "http://"+adminAddr+"/metrics"); code != 200 || !strings.Contains(body, "go_goroutines") {
 		t.Errorf("/metrics = %d", code)
