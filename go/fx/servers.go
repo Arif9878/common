@@ -23,9 +23,8 @@ type httpOptions struct {
 }
 
 // HTTPHandlerAsIs serves the handler without the standard middleware. Use
-// it when the handler already applies it, as Echo apps with
-// echoadapter.Middleware do; otherwise requests would be traced and logged
-// twice.
+// it when the handler already applies it; otherwise requests would be
+// traced and logged twice. For Echo, use [EchoServer], which sets this up.
 func HTTPHandlerAsIs() HTTPOption { return func(o *httpOptions) { o.asIs = true } }
 
 // HTTPMiddlewareOptions configures the standard middleware, for example

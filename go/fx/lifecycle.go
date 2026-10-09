@@ -10,9 +10,10 @@
 //		commonfx.Observability(),
 //		commonfx.Lifecycle(),
 //		commonfx.AdminServer(),             // /live /ready /startup /metrics
-//		commonfx.HTTPServer(),
+//		commonfx.EchoServer(),              // or HTTPServer() for a plain http.Handler
 //		commonfx.Postgres(),
-//		fx.Provide(NewOrderService, NewRouter),
+//		fx.Provide(NewOrderService),
+//		fx.Invoke(RegisterRoutes),          // func(e *echo.Echo, s *OrderService)
 //		commonfx.Ready(),                   // always last
 //		fx.StopTimeout(45*time.Second),     // longer than the graceful timeout
 //	).Run()
