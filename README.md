@@ -51,6 +51,15 @@ It requires **Go 1.26** or newer. Every package emits OpenTelemetry traces and m
 
 Each package's Go documentation describes its guarantees, failure behavior and limits: `go doc github.com/Arif9878/common/go/<package>`. The design notes and conventions are in [`docs/go-platform-proposal.md`](docs/go-platform-proposal.md).
 
+## Start a new service
+
+```sh
+go run github.com/Arif9878/common/go/cmd/newservice@latest -module github.com/acme/billing            # add -postgres for PostgreSQL with migrations
+cd billing && go mod tidy && go test ./...
+```
+
+It writes an fx service on this library: configuration from the environment, logs, traces and metrics, the admin server with health probes, an Echo API with an example route and its end-to-end test, a Dockerfile and a Kubernetes deployment. The service requires the library version `newservice` ran at. [`examples/orders-service`](examples/orders-service) shows a fuller service (PostgreSQL, Kafka, the outbox, Redis).
+
 ## A service in a few lines
 
 ```go

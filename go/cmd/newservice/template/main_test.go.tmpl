@@ -1,0 +1,73 @@
+package main
+
+import (
+	"context"
+	"io"
+	"net/http"
+{{- if .Postgres}}
+	"strconv"
+{{- end}}
+	"strings"
+	"testing"
+
+	"go.uber.org/fx"
+	"go.uber.org/fx/fxtest"
+
+	"github.com/Arif9878/common/go/config"
+	commonfx "github.com/Arif9878/common/go/fx"
+	"github.com/Arif9878/common/go/testkit"
+{{- if .Postgres}}
+	"github.com/Arif9878/common/go/testkit/pgtest"
+{{- end}}
+)
+
+// TestService starts the whole application on free ports and calls it.
+{{- if .Postgres}}
+// PostgreSQL comes from POSTGRES_TEST_URL; without it the test is skipped.
+{{- end}}
+func TestService(t *testing.T) {
+{{- if .Postgres}}
+	pg := pgtest.Config(t)
+{{- end}}
+	httpAddr, adminAddr := testkit.FreeAddr(t), testkit.FreeAddr(t)
+	env := map[string]string{
+		"LOG_LEVEL":  "warn",
+		"HTTP_ADDR":  httpAddr,
+		"ADMIN_ADDR": adminAddr,
+{{- if .Postgres}}
+		"POSTGRES_HOST":     pg.Host,
+		"POSTGRES_PORT":     strconv.Itoa(pg.Port),
+		"POSTGRES_DATABASE": pg.Database,
+		"POSTGRES_USER":     pg.User,
+		"POSTGRES_PASSWORD": pg.Password.Reveal(),
+		"POSTGRES_SSLMODE":  "disable",
+{{- end}}
+	}
+	app := fxtest.New(t, append([]fx.Option{commonfx.Config[Config](config.WithEnvironment(env))},
+		append(options(), commonfx.Ready())...)...)
+	app.RequireStart()
+	defer app.RequireStop()
+
+	if code, body := get(t, "http://"+httpAddr+"/v1/hello?name=Ada"); code != http.StatusOK || !strings.Contains(body, "hello, Ada") {
+		t.Errorf("GET /v1/hello = %d %s", code, body)
+	}
+	// Errors are problem+json responses naming the invalid fields.
+	if code, body := get(t, "http://"+httpAddr+"/v1/hello"); code != http.StatusBadRequest || !strings.Contains(body, `"field":"name"`) {
+		t.Errorf("GET /v1/hello without a name = %d %s", code, body)
+	}
+	if code, _ := get(t, "http://"+adminAddr+"/ready"); code != http.StatusOK {
+		t.Errorf("/ready = %d", code)
+	}
+}
+
+func get(t *testing.T, url string) (int, string) {
+	t.Helper()
+	req, _ := http.NewRequestWithContext(context.Background(), http.MethodGet, url, nil)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("GET %s: %v", url, err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	b, _ := io.ReadAll(resp.Body)
+	return resp.StatusCode, string(b)
+}

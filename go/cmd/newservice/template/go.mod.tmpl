@@ -1,0 +1,12 @@
+module {{.Module}}
+
+go 1.26.0
+
+require (
+	github.com/Arif9878/common/go {{.Version}}
+	github.com/Arif9878/common/go/fx {{.Version}}
+{{- if .Postgres}}
+	github.com/Arif9878/common/go/datastore/postgres {{.Version}}
+	github.com/Arif9878/common/go/testkit/pgtest {{.Version}}
+{{- end}}
+)

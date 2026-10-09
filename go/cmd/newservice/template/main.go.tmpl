@@ -1,0 +1,62 @@
+// Command {{.Name}} serves its API with the common library: configuration
+// from the environment, logs, traces and metrics, health probes and
+// graceful shutdown. See the README.
+package main
+
+import (
+	"time"
+
+	"go.uber.org/fx"
+
+{{- if .Postgres}}
+	"github.com/Arif9878/common/go/datastore/postgres"
+{{- end}}
+	commonfx "github.com/Arif9878/common/go/fx"
+	"github.com/Arif9878/common/go/observability/logging"
+	"github.com/Arif9878/common/go/observability/logs"
+	"github.com/Arif9878/common/go/observability/metrics"
+	"github.com/Arif9878/common/go/observability/otlp"
+	"github.com/Arif9878/common/go/observability/tracing"
+	"github.com/Arif9878/common/go/transport/http/httpserver"
+
+	"{{.Module}}/internal/api"
+)
+
+// Config is read from the environment. The common library's
+// ENVIRONMENT.md lists every variable under these prefixes.
+type Config struct {
+	OTLP     otlp.Config          `envPrefix:"OTLP_"`
+	Log      logging.Config       `envPrefix:"LOG_"`
+	Logs     logs.Config          `envPrefix:"LOGS_"`
+	Tracing  tracing.Config       `envPrefix:"TRACING_"`
+	Metrics  metrics.Config       `envPrefix:"METRICS_"`
+	HTTP     httpserver.Config    `envPrefix:"HTTP_"`
+	Admin    commonfx.AdminConfig `envPrefix:"ADMIN_"`
+{{- if .Postgres}}
+	Postgres postgres.Config      `envPrefix:"POSTGRES_"`
+{{- end}}
+}
+
+func main() { app().Run() }
+
+// options are the application's fx options, shared with the test.
+func options() []fx.Option {
+	return []fx.Option{
+		commonfx.ConfigFields[Config](),
+		commonfx.Observability(),
+		commonfx.Lifecycle(commonfx.WithShutdownTimeout(30 * time.Second)),
+		commonfx.AdminServer(), // /live, /ready, /startup and /metrics on ADMIN_ADDR
+		commonfx.EchoServer(),  // the API on HTTP_ADDR
+{{- if .Postgres}}
+		commonfx.Postgres(),
+{{- end}}
+		api.Module,
+	}
+}
+
+func app() *fx.App {
+	return fx.New(append([]fx.Option{commonfx.Config[Config]()}, append(options(),
+		commonfx.Ready(), // always last
+		fx.StopTimeout(45*time.Second),
+	)...)...)
+}

@@ -1,0 +1,10 @@
+-- +goose Up
+-- Replace with the service's schema. Each change is a new numbered file;
+-- applied files never change.
+CREATE TABLE IF NOT EXISTS {{.Ident}}_example (
+    id         bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    created_at timestamptz NOT NULL DEFAULT now()
+);
+
+-- +goose Down
+DROP TABLE IF EXISTS {{.Ident}}_example;

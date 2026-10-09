@@ -1,0 +1,41 @@
+# {{.Name}}
+
+Generated with `go run github.com/Arif9878/common/go/cmd/newservice@{{.Version}}`. It is built on the [common library](https://github.com/Arif9878/common): read its README for what each piece does.
+
+| File | |
+|---|---|
+| `main.go` | The fx application: configuration from the environment, observability, lifecycle, the admin server (`/live`, `/ready`, `/startup`, `/metrics`) and the Echo API server{{if .Postgres}}, PostgreSQL{{end}}. |
+| `internal/api/` | The API. Handlers return errors; they become problem+json responses with the status of their kind.{{if .Postgres}} `migrations/` holds the goose migrations applied at startup.{{end}} |
+| `main_test.go` | Starts the whole service and calls it.{{if .Postgres}} Needs `POSTGRES_TEST_URL`.{{end}} |
+| `Dockerfile`, `k8s/deployment.yaml` | Build and deployment: identity from `OTEL_*`, probes on the admin port, a grace period longer than the shutdown timeout. |
+
+## Run
+
+```sh
+go mod tidy
+{{- if .Postgres}}
+POSTGRES_HOST=localhost POSTGRES_DATABASE={{.Ident}} POSTGRES_USER=postgres POSTGRES_PASSWORD=postgres POSTGRES_SSLMODE=disable \
+{{- end}}
+LOG_FORMAT=text go run .
+curl -s 'localhost:8080/v1/hello?name=Ada'
+curl -s localhost:9090/ready
+```
+
+Configuration is environment variables only; the common library's ENVIRONMENT.md lists them.
+
+## Test
+
+```sh
+{{if .Postgres}}POSTGRES_TEST_URL=postgres://postgres:postgres@localhost:5432/{{.Ident}} {{end}}go test -race ./...
+```
+
+## Upgrade the common library
+
+Use one version for every `github.com/Arif9878/common/...` module:
+
+```sh
+go get github.com/Arif9878/common/go@vX.Y.Z github.com/Arif9878/common/go/fx@vX.Y.Z{{if .Postgres}} github.com/Arif9878/common/go/datastore/postgres@vX.Y.Z github.com/Arif9878/common/go/testkit/pgtest@vX.Y.Z{{end}}
+go mod tidy
+```
+
+Read the release notes (CHANGELOG.md in the library) for breaking changes first.
