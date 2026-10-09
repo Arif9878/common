@@ -9,7 +9,14 @@ linters:
     - gosec
     - misspell
     - noctx
+    - revive
   settings:
+    revive:
+      rules:
+        # Every exported identifier is documented: the Go documentation is
+        # the API reference (see COMPATIBILITY.md).
+        - name: exported
+          arguments: ["disableStutteringCheck"]
     depguard:
       rules:
         production:
