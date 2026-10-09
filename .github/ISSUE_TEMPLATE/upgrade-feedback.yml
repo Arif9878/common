@@ -1,0 +1,64 @@
+name: Upgrade feedback
+description: Report how upgrading a service to a new version of the library went. v1.0 waits on this feedback.
+title: "Upgrade feedback: <service> to vX.Y.Z"
+labels: ["upgrade-feedback"]
+body:
+  - type: input
+    id: service
+    attributes:
+      label: Service
+      description: Which service, and which team owns it.
+    validations:
+      required: true
+  - type: input
+    id: versions
+    attributes:
+      label: Versions
+      description: From and to, such as v0.6.1 → v0.7.0.
+      placeholder: v0.6.1 → v0.7.0
+    validations:
+      required: true
+  - type: checkboxes
+    id: modules
+    attributes:
+      label: Modules the service uses
+      options:
+        - label: core (go)
+        - label: fx
+        - label: datastore/postgres (incl. migrate)
+        - label: datastore/redis (incl. cache, ratelimit)
+        - label: messaging/kafka (incl. kafkaproto)
+        - label: messaging/outbox
+        - label: transport/grpc
+        - label: secret/vault
+        - label: idempotency or lock stores
+  - type: dropdown
+    id: effort
+    attributes:
+      label: How long did the upgrade take?
+      options:
+        - Under 15 minutes (bump and tidy)
+        - Under an hour
+        - Half a day
+        - More than a day
+    validations:
+      required: true
+  - type: textarea
+    id: changes
+    attributes:
+      label: What had to change
+      description: Code, configuration, dashboards or alerts you changed, and why. Paste compiler errors if any.
+  - type: textarea
+    id: surprises
+    attributes:
+      label: Surprises
+      description: Anything the release notes or CHANGELOG.md did not tell you, or behavior that changed without a note. These are the most useful part.
+  - type: dropdown
+    id: blocker
+    attributes:
+      label: Should this block v1.0?
+      description: Maintainers add the v1-blocker label if so.
+      options:
+        - "No"
+        - "Yes: the API or behavior should change before it is frozen"
+        - Not sure
