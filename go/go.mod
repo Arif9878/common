@@ -4,16 +4,12 @@ go 1.26.0
 
 require (
 	github.com/caarlos0/env/v11 v11.4.1
-	github.com/go-oauth2/oauth2/v4 v4.6.0
 	github.com/go-playground/validator/v10 v10.30.5
 	github.com/golang-jwt/jwt/v5 v5.3.1
 	github.com/labstack/echo/v4 v4.16.0
-	github.com/lib/pq v1.12.3
 	github.com/open-feature/go-sdk v1.19.0
 	github.com/prometheus/client_golang v1.24.1
 	github.com/robfig/cron/v3 v3.0.1
-	github.com/satori/go.uuid v1.2.0
-	github.com/sirupsen/logrus v1.10.2
 	github.com/sony/gobreaker/v2 v2.4.0
 	go.opentelemetry.io/contrib/bridges/otelslog v0.21.0
 	go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp v0.72.0

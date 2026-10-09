@@ -338,7 +338,7 @@ Import paths are the same as before the split: `go get` the module that holds th
 
 All modules are released together with one version, and each is tagged with its folder: `go/v0.5.0`, `go/messaging/kafka/v0.5.0`, `go/fx/v0.5.0`. Use the same version for every module of this repository that a service requires. Before v1.0, minor versions may change behavior; release notes call out what changed and how to upgrade. See the [releases](https://github.com/Arif9878/common/releases) and [`go/RELEASING.md`](go/RELEASING.md).
 
-The packages from `go/v0.1.0` (`logger`, `observability`, `http`, `http/echo/*`, `constant`, `utils`) are deprecated and will be removed in v1.0. [`go/MIGRATION.md`](go/MIGRATION.md) shows the replacement for each.
+The packages from `go/v0.1.0` (`logger`, `observability`, `http`, `http/echo/*`, `constant`, `utils`) have been removed; [`go/MIGRATION.md`](go/MIGRATION.md) shows the replacement for each. Services still using them stay on `go/v0.6.x` while they migrate.
 
 ## Development
 

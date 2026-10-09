@@ -624,7 +624,9 @@ manual wiring. A mutation check (telemetry not passed to the HTTP middleware) ma
   `logging.Config.Output` sends records to stdout, OTLP or both, keeping redaction, with trace
   IDs native in OTLP and configurable field names on stdout. The README shows configurations
   for Grafana, Grafana Cloud, New Relic and Datadog.
-- Legacy packages stay until v1.0 (decided). `go/MIGRATION.md` gives the replacement for each.
+- ~~Legacy packages~~: removed in preparation for v1.0 (`logger`, `observability` root package,
+  `http`, `http/echo/*`, `constant`, `utils`), taking logrus, satori/go.uuid, lib/pq and
+  go-oauth2 out of the core module. `go/MIGRATION.md` gives the replacement for each.
 
 ## 13. Open questions for the team
 
