@@ -90,7 +90,22 @@ func run(ctx context.Context) error {
 }
 ```
 
-With Uber fx, [`go/fx`](go/fx) does this wiring for you.
+With Uber fx, [`go/fx`](go/fx) does this wiring for you:
+
+```go
+fx.New(
+	commonfx.Config[Config](),
+	commonfx.ConfigFields[Config](),
+	commonfx.Observability(),
+	commonfx.Lifecycle(),
+	commonfx.AdminServer(), // /live, /ready, /startup, /metrics on :9090
+	commonfx.EchoServer(),  // *echo.Echo with the standard middleware and errors
+	fx.Invoke(func(e *echo.Echo) {
+		e.GET("/orders/:id", getOrder)
+	}),
+	commonfx.Ready(), // always last
+).Run()
+```
 
 ## Versions and modules
 
