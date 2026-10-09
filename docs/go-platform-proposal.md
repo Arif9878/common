@@ -558,12 +558,15 @@ manual wiring. A mutation check (telemetry not passed to the HTTP middleware) ma
   and `Getenv`; `testkit/pgtest` gives a PostgreSQL connection from `POSTGRES_TEST_URL`.
   Deterministic time is `testing/synctest`; fakes stay with their packages. It is not an
   assertion framework, and a lint rule keeps production code from importing it.
-- Module split of the heavy integrations before v1.0 (§2); `go/fx` is already separate.
+- Module split of the heavy integrations before v1.0 (§2), one module per integration (decided);
+  `go/fx` is already separate.
+- Legacy packages stay until v1.0 (decided). `go/MIGRATION.md` gives the replacement for each.
 
 ## 13. Open questions for the team
 
 1. ~~Multi-module now, or single module until v1 (§2)?~~ Single module.
 2. ~~Prometheus pull (`/metrics`) or OTLP push as the default metrics exporter?~~ Prometheus pull.
-3. Is Echo the organizational standard? That decides whether `echoadapter` is permanent or migration-only.
-4. Minimum Go version consumers must be on.
+3. ~~Is Echo the organizational standard? That decides whether `echoadapter` is permanent or migration-only.~~
+   Yes: `echoadapter` is permanent.
+4. ~~Minimum Go version consumers must be on.~~ Go 1.26.
 5. ~~Approve the renames in §6.~~ Approved.

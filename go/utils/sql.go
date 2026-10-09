@@ -1,3 +1,8 @@
+// Package utils holds legacy helpers for database/sql null values.
+//
+// Deprecated: use pgx pointer or pgtype values, or the database/sql Null
+// types directly (sql.Null[time.Time] instead of pq.NullTime); see
+// MIGRATION.md. This package will be removed in v1.0.
 package utils
 
 import (
