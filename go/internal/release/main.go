@@ -19,8 +19,13 @@
 //	cd go && go run ./internal/release -version v0.5.0          # dry run
 //	cd go && go run ./internal/release -version v0.5.0 -push    # release
 //
-// It refuses to run unless the working tree is clean, on main, and every
-// tag is new.
+// It refuses to run unless the working tree is clean, on main, at the tip
+// of the remote's main, with green CI on that commit (checked with gh), and
+// every tag is new. It also runs gorelease on each module released before
+// and refuses a version too small for the API changes, such as a patch
+// release with an incompatible change. -skip-ci and -skip-api-check turn
+// those two checks off. -trailer adds a trailer, such as a Co-Authored-By
+// line, to the release commit.
 package main
 
 import (
@@ -40,14 +45,17 @@ import (
 )
 
 func main() {
-	var (
-		version = flag.String("version", "", "version to release, such as v0.5.0")
-		push    = flag.Bool("push", false, "commit, tag and push (default: print the plan only)")
-		remote  = flag.String("remote", "origin", "git remote or URL to push to")
-		ghRel   = flag.Bool("github-release", false, "with -push, create GitHub releases with generated notes (needs gh)")
-	)
+	var o opts
+	flag.StringVar(&o.version, "version", "", "version to release, such as v0.5.0")
+	flag.BoolVar(&o.push, "push", false, "commit, tag and push (default: print the plan only)")
+	flag.StringVar(&o.remote, "remote", "origin", "git remote or URL to push to")
+	flag.BoolVar(&o.ghRelease, "github-release", false, "with -push, create GitHub releases with generated notes (needs gh)")
+	flag.BoolVar(&o.skipCI, "skip-ci", false, "release without checking that CI passed on the commit")
+	flag.BoolVar(&o.skipAPI, "skip-api-check", false, "release without checking API compatibility with gorelease")
+	flag.Func("trailer", "add a trailer line, such as a Co-Authored-By line, to the release commit (repeatable)",
+		func(s string) error { o.trailers = append(o.trailers, s); return nil })
 	flag.Parse()
-	if err := run(*version, *push, *remote, *ghRel); err != nil {
+	if err := run(o); err != nil {
 		fmt.Fprintln(os.Stderr, "release:", err)
 		os.Exit(1)
 	}
@@ -65,7 +73,18 @@ type module struct {
 // Tag returns the module's tag for version.
 func (m module) Tag(version string) string { return m.Dir + "/" + version }
 
-func run(version string, push bool, remote string, ghRelease bool) error {
+type opts struct {
+	version   string
+	push      bool
+	remote    string
+	ghRelease bool
+	skipCI    bool
+	skipAPI   bool
+	trailers  []string
+}
+
+func run(o opts) error {
+	version, push, remote, ghRelease := o.version, o.push, o.remote, o.ghRelease
 	if !semver.MatchString(version) {
 		return fmt.Errorf("-version %q is not a semantic version like v0.5.0", version)
 	}
@@ -95,12 +114,39 @@ func run(version string, push bool, remote string, ghRelease bool) error {
 		}
 		fmt.Println()
 	}
-	if err := preflight(root, mods, version); err != nil {
+	checks := []struct {
+		name string
+		skip bool
+		fn   func() error
+	}{
+		{"working tree, branch and tags", false, func() error { return preflight(root, mods, version) }},
+		{"main matches " + remote, false, func() error { return checkRemote(root, remote) }},
+		{"CI on HEAD", o.skipCI, func() error { return checkCI(root) }},
+		{"API compatibility (gorelease)", o.skipAPI, func() error { return checkAPI(root, mods, version) }},
+	}
+	var failed []string
+	fmt.Println("\nChecks:")
+	for i, c := range checks {
+		if c.skip {
+			fmt.Printf("  - %s: skipped\n", c.name)
+			continue
+		}
+		if err := c.fn(); err != nil {
+			fmt.Printf("  ✗ %s: %v\n", c.name, err)
+			failed = append(failed, c.name)
+			if i == 0 {
+				break // the other checks assume a clean main
+			}
+			continue
+		}
+		fmt.Printf("  ✓ %s\n", c.name)
+	}
+	if len(failed) > 0 {
 		if !push {
-			fmt.Println("\nDry run; a release would fail now:", err)
+			fmt.Println("\nDry run; a release would fail now.")
 			return nil
 		}
-		return err
+		return fmt.Errorf("checks failed: %s", strings.Join(failed, ", "))
 	}
 	if !push {
 		fmt.Println("\nDry run: nothing changed. Run again with -push to release.")
@@ -127,7 +173,11 @@ func run(version string, push bool, remote string, ghRelease bool) error {
 	if dirty, err := output(root, "git", "status", "--porcelain"); err != nil {
 		return err
 	} else if dirty != "" {
-		if _, err := output(root, "git", "commit", "-qam", "chore(release): require "+version+" between modules"); err != nil {
+		msg := "chore(release): require " + version + " between modules"
+		if len(o.trailers) > 0 {
+			msg += "\n\n" + strings.Join(o.trailers, "\n")
+		}
+		if _, err := output(root, "git", "commit", "-qam", msg); err != nil {
 			return err
 		}
 	}
@@ -285,4 +335,13 @@ func output(dir, name string, args ...string) (string, error) {
 		return "", fmt.Errorf("%s %s: %w: %s", name, strings.Join(args, " "), err, strings.TrimSpace(stderr.String()))
 	}
 	return strings.TrimSpace(stdout.String()), nil
+}
+
+// combined runs a command in dir and returns its standard output and
+// error together, also when it fails.
+func combined(dir, name string, args ...string) (string, error) {
+	cmd := exec.CommandContext(context.Background(), name, args...) //nolint:gosec // release tooling runs fixed commands
+	cmd.Dir = dir
+	out, err := cmd.CombinedOutput()
+	return string(out), err
 }

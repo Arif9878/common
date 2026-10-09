@@ -1,0 +1,45 @@
+name: vuln-nightly
+
+# Vulnerabilities are published between pull requests; check main every
+# night with the newest Go, and keep one open issue while any is found.
+on:
+  schedule:
+    - cron: "17 2 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+defaults:
+  run:
+    working-directory: go
+
+jobs:
+  govulncheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
+        with:
+          go-version: stable
+          check-latest: true
+          cache-dependency-path: go/**/go.sum
+      - id: scan
+        run: |
+          set -o pipefail
+          make vuln 2>&1 | tee "$RUNNER_TEMP/vuln.txt"
+      - if: failure() && steps.scan.outcome == 'failure'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          title="govulncheck: vulnerabilities on main"
+          body=$(printf 'The nightly scan found vulnerabilities: %s\n\n```\n%s\n```\n' "$RUN_URL" \
+            "$(grep -E '^(== |Vulnerability #|  More info|    Found in|    Fixed in)' "$RUNNER_TEMP/vuln.txt" | head -150)")
+          issue=$(gh issue list --state open --search "\"$title\" in:title" --json number -q '.[0].number')
+          if [ -n "$issue" ]; then
+            gh issue comment "$issue" --body "$body"
+          else
+            gh issue create --title "$title" --body "$body"
+          fi

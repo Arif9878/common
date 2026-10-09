@@ -28,8 +28,16 @@ jobs:
         ports: ["5432:5432"]
         options: >-
           --health-cmd pg_isready --health-interval 2s --health-timeout 5s --health-retries 15
+      # The Redis stores and locks run their Lua scripts on real Redis as
+      # well as on miniredis.
+      redis:
+        image: redis:8
+        ports: ["6379:6379"]
+        options: >-
+          --health-cmd "redis-cli ping" --health-interval 2s --health-timeout 5s --health-retries 15
     env:
       POSTGRES_TEST_URL: postgres://postgres:postgres@localhost:5432/app
+      REDIS_TEST_ADDR: localhost:6379
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-go@v6
@@ -37,7 +45,10 @@ jobs:
           go-version: ${{ matrix.go }}
           cache-dependency-path: go/**/go.sum
           check-latest: true # security fixes ship as patch releases
-      - run: make tidy vet test
+      - run: make tidy vet
+      - run: make test COVER=${{ matrix.go == '1.27.x' && '1' || '' }}
+      - if: matrix.go == '1.27.x'
+        run: make cover-summary >> "$GITHUB_STEP_SUMMARY"
 
   lint:
     runs-on: ubuntu-latest

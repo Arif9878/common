@@ -11,7 +11,7 @@ define each
 	@set -e; for m in $(MODULES); do echo "== $$m"; (cd $$m && $(1)); done
 endef
 
-.PHONY: check tidy vet lint test vuln test-kafka release
+.PHONY: check tidy vet lint test cover-summary vuln test-kafka release
 
 check: tidy vet lint test vuln
 
@@ -24,8 +24,16 @@ vet:
 lint:
 	$(call each,go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@$(GOLANGCI_LINT_VERSION) run --config $(CURDIR)/.golangci.yml ./...)
 
+# COVER=1 also writes coverage.out in each module, counting every package
+# of the module that a test exercises, not only the package under test.
 test:
-	$(call each,go test -race -shuffle=on -count=1 ./...)
+	$(call each,go test -race -shuffle=on -count=1 $(if $(COVER),-coverpkg=./... -coverprofile=coverage.out) ./...)
+
+# cover-summary prints a Markdown table of total coverage per module, from
+# a previous make test COVER=1.
+cover-summary:
+	@echo "| Module | Coverage |"; echo "|---|---|"
+	@for m in $(MODULES); do [ -f $$m/coverage.out ] && printf "| %s | %s |\n" "$${m#./}" "$$(cd $$m && go tool cover -func=coverage.out | tail -1 | awk '{print $$NF}')"; done; true
 
 vuln:
 	$(call each,go run golang.org/x/vuln/cmd/govulncheck@$(GOVULNCHECK_VERSION) ./...)
