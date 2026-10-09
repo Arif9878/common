@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 )
@@ -139,6 +140,16 @@ func checkAPI(root string, mods []module, version string) error {
 		out, _ := combined(filepath.Join(root, m.Dir), "go", "run", "golang.org/x/exp/cmd/gorelease@"+goreleaseVersion,
 			"-base="+base, "-version="+version)
 		verdict, ok := apiVerdict(out, base, version)
+		if !ok && len(m.Requires) > 0 && needsUnreleasedAPI(out, repoPrefix(mods)) {
+			// gorelease ignores replace directives, so it builds m against
+			// the released versions of the modules it requires, which lack
+			// the API this release adds. Those modules are checked
+			// themselves; m can only be checked once they are tagged.
+			verdict, ok = "not checked: uses API this release adds to "+strings.Join(m.Requires, ", "), true
+			if c := section(out, "## incompatible changes"); c != "" {
+				verdict, ok = "incompatible changes in the packages gorelease could load", !patchOnly(base, version)
+			}
+		}
 		fmt.Printf("  %-28s %s → %s: %s\n", m.Dir, base, version, verdict)
 		if !ok {
 			problems = append(problems, m.Dir+": "+verdict+"\n"+section(out, "## incompatible changes"))
@@ -163,17 +174,66 @@ func apiVerdict(out, base, version string) (string, bool) {
 	if !valid {
 		return summary, false
 	}
-	b, v := versionParts(base), versionParts(version)
-	patchOnly := b[0] == v[0] && b[1] == v[1]
+	patch := patchOnly(base, version)
 	switch {
-	case section(out, "## incompatible changes") != "" && patchOnly:
-		return fmt.Sprintf("incompatible changes need at least v%d.%d.0", v[0], v[1]+1), false
-	case section(out, "## compatible changes") != "" && patchOnly:
+	case section(out, "## incompatible changes") != "" && patch:
+		return fmt.Sprintf("incompatible changes need at least v%d.%d.0", versionParts(version)[0], versionParts(version)[1]+1), false
+	case section(out, "## compatible changes") != "" && patch:
 		return "compatible, but adds API in a patch release (consider a minor version)", true
 	case section(out, "## incompatible changes") != "":
 		return "incompatible changes (allowed by this minor or major version)", true
 	}
 	return summary, true
+}
+
+// patchOnly reports whether version only bumps base's patch number.
+func patchOnly(base, version string) bool {
+	b, v := versionParts(base), versionParts(version)
+	return b[0] == v[0] && b[1] == v[1]
+}
+
+// undefinedIdent matches a type-check error naming a missing identifier of
+// another package, such as "undefined: errors.FieldError".
+var undefinedIdent = regexp.MustCompile(`^\S+:\d+:\d+: undefined: \w+\.\w+$`)
+
+// needsUnreleasedAPI reports whether gorelease failed only because the
+// module uses packages or identifiers missing from the released versions
+// of this repository's modules (whose paths start with prefix): every
+// missing package is one of ours, and every type-check error is an
+// undefined identifier of another package.
+func needsUnreleasedAPI(out, prefix string) bool {
+	found := false
+	for _, line := range strings.Split(out, "\n") {
+		line = strings.TrimSpace(line)
+		if _, pkg, ok := strings.Cut(line, "cannot find module providing package "); ok {
+			if !strings.HasPrefix(pkg, prefix+"/") {
+				return false
+			}
+			found = true
+		}
+	}
+	errs := section(out, "## errors in release version")
+	for _, line := range strings.Split(errs, "\n") {
+		if line = strings.TrimSpace(line); line == "" {
+			continue
+		}
+		if !undefinedIdent.MatchString(line) {
+			return false
+		}
+		found = true
+	}
+	return found
+}
+
+// repoPrefix returns the core module's path, the prefix of every module
+// path of the repository.
+func repoPrefix(mods []module) string {
+	for _, m := range mods {
+		if m.Dir == "go" {
+			return m.Path
+		}
+	}
+	return "\x00" // no core module: nothing matches
 }
 
 // goreleaseVerdict reads gorelease's summary: whether it considers version
@@ -201,7 +261,7 @@ func section(out, heading string) string {
 	for _, line := range strings.Split(out, "\n") {
 		switch {
 		case strings.HasPrefix(line, "#"):
-			in = strings.TrimSpace(line) == heading
+			in = strings.TrimSuffix(strings.TrimSpace(line), ":") == heading
 		case in && strings.TrimSpace(line) != "":
 			lines = append(lines, strings.TrimSpace(line))
 		}
