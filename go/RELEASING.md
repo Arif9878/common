@@ -11,9 +11,9 @@ make release VERSION=v0.5.0 PUSH=1    # release
 The tool (`internal/release`) runs these steps:
 
 1. **Find and order the modules.** It finds every `go.mod` under `go/` and orders the modules so each comes after the modules it requires. Core comes first; for example `go/datastore/postgres` comes before `go/idempotency/pgstore`, which requires it.
-2. **Bump internal requirements.** A module that requires another module of this repository gets that requirement set to the new version, then `go mod tidy`. The tool commits this on `main`. Consumers ignore `replace` directives, so a published module must require released versions.
+2. **Bump internal requirements and write the changelog.** A module that requires another module of this repository gets that requirement set to the new version, then `go mod tidy`. Consumers ignore `replace` directives, so a published module must require released versions. The tool also adds a section for the version to [`CHANGELOG.md`](CHANGELOG.md) (see below) and commits both on `main`.
 3. **Tag.** It tags every module at that commit: `go/v0.5.0`, `go/messaging/kafka/v0.5.0`, `go/fx/v0.5.0`, and so on.
-4. **Push and publish.** It pushes `main` and the tags, then creates a GitHub release per tag with generated notes. The core release is marked latest.
+4. **Push and publish.** It pushes `main` and the tags, then creates a GitHub release per tag. The core release is marked latest and uses the changelog section as its notes; the other releases point to it.
 
 Before changing anything, the tool runs these checks, and the dry run shows their result:
 
@@ -23,14 +23,27 @@ Before changing anything, the tool runs these checks, and the dry run shows thei
 | `main` matches the remote | local `main` is behind or ahead of the remote's `main` (pull or push first) |
 | CI on HEAD | a GitHub check on the commit failed, is still running, or hasn't started (needs `gh`; `-skip-ci` turns it off) |
 | API compatibility | `gorelease` finds incompatible API changes and the version only bumps the patch number. Before v1.0, incompatible changes need at least a minor version. New API in a patch release is reported but allowed. Modules without a previous release are skipped. `-skip-api-check` turns it off. |
+| Version fits the commits | a commit since the previous release is breaking and the version is too small: before v1.0 it needs a new minor version, from v1 on a new major version |
 
 It also rejects v2 and later until the module paths carry the `/vN` suffix Go requires.
 
 `-trailer "Co-Authored-By: Name <email>"` adds a trailer to the release commit; the flag can be repeated.
 
+**Changelog.** The section is written from the [Conventional Commits](https://www.conventionalcommits.org) merged since the previous release, so write commit subjects as `type(scope): description`:
+
+| Commit | Section |
+|---|---|
+| `feat(fx): add Scheduler` | Features |
+| `fix(kafka): …` | Fixes |
+| `perf(cache): …` | Performance |
+| `refactor!: …`, or any type with a `BREAKING CHANGE: <how to upgrade>` footer | Breaking changes, with the footer as the upgrade note |
+| `docs`, `test`, `ci`, `chore`, `build`, `refactor`, `style` | left out |
+
+Each entry links to the pull request that merged it, or to the commit for a direct push. `make changelog` prints the section for what's merged so far; the dry run of `make release` prints it too. To reword an entry, edit `CHANGELOG.md` and the GitHub release after releasing.
+
 **After a release:**
 
-- **Release notes.** Edit the generated notes on GitHub: name the behavior changes and how to upgrade.
+- **Release notes.** Check the notes on GitHub, and add upgrade steps the commit footers don't cover.
 - **Remote URL.** If pushing to `origin` doesn't work from your machine, pass a URL instead: `make release VERSION=… PUSH=1 REMOTE=https://github.com/Arif9878/common.git`.
 
 **Versioning:**

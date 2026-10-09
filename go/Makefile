@@ -11,7 +11,7 @@ define each
 	@set -e; for m in $(MODULES); do echo "== $$m"; (cd $$m && $(1)); done
 endef
 
-.PHONY: check tidy vet lint test cover-summary vuln envdoc envdoc-check examples test-kafka release
+.PHONY: check tidy vet lint test cover-summary vuln envdoc envdoc-check examples test-kafka release changelog
 
 check: tidy vet lint envdoc-check test vuln examples
 
@@ -71,3 +71,7 @@ test-kafka:
 release:
 	@test -n "$(VERSION)" || { echo "set VERSION=vX.Y.Z"; exit 1; }
 	go run ./internal/release -version $(VERSION) $(if $(PUSH),-push -github-release) $(if $(REMOTE),-remote $(REMOTE))
+
+# Print the changelog of the commits merged since the last release.
+changelog:
+	go run ./internal/release -notes

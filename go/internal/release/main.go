@@ -11,13 +11,21 @@
 //     tidy, and commits that change on main;
 //  3. tags every module at that commit (go/vX.Y.Z, go/fx/vX.Y.Z, …);
 //  4. with -push, pushes main and the tags, and with -github-release,
-//     creates a GitHub release per tag with generated notes (the core
-//     module's marked latest).
+//     creates a GitHub release per tag (the core module's marked latest).
+//
+// The release commit also adds a section to go/CHANGELOG.md, written from
+// the Conventional Commits since the previous release: breaking changes
+// (a "!" after the type, or a BREAKING CHANGE footer), features, fixes and
+// performance improvements. The core module's GitHub release uses that
+// section as its notes. A breaking change needs a new minor version
+// before v1.0 and a new major version from v1 on. -notes prints the
+// section for the commits not released yet and exits.
 //
 // Without -push it only prints the plan and changes nothing:
 //
 //	cd go && go run ./internal/release -version v0.5.0          # dry run
 //	cd go && go run ./internal/release -version v0.5.0 -push    # release
+//	cd go && go run ./internal/release -notes                   # unreleased changes
 //
 // It refuses to run unless the working tree is clean, on main, at the tip
 // of the remote's main, with green CI on that commit (checked with gh), and
@@ -30,6 +38,7 @@ package main
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -42,6 +51,7 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+	"time"
 )
 
 func main() {
@@ -49,7 +59,8 @@ func main() {
 	flag.StringVar(&o.version, "version", "", "version to release, such as v0.5.0")
 	flag.BoolVar(&o.push, "push", false, "commit, tag and push (default: print the plan only)")
 	flag.StringVar(&o.remote, "remote", "origin", "git remote or URL to push to")
-	flag.BoolVar(&o.ghRelease, "github-release", false, "with -push, create GitHub releases with generated notes (needs gh)")
+	flag.BoolVar(&o.ghRelease, "github-release", false, "with -push, create GitHub releases (needs gh)")
+	flag.BoolVar(&o.notes, "notes", false, "print the changelog of the commits since the last release and exit")
 	flag.BoolVar(&o.skipCI, "skip-ci", false, "release without checking that CI passed on the commit")
 	flag.BoolVar(&o.skipAPI, "skip-api-check", false, "release without checking API compatibility with gorelease")
 	flag.Func("trailer", "add a trailer line, such as a Co-Authored-By line, to the release commit (repeatable)",
@@ -78,6 +89,7 @@ type opts struct {
 	push      bool
 	remote    string
 	ghRelease bool
+	notes     bool
 	skipCI    bool
 	skipAPI   bool
 	trailers  []string
@@ -85,7 +97,7 @@ type opts struct {
 
 func run(o opts) error {
 	version, push, remote, ghRelease := o.version, o.push, o.remote, o.ghRelease
-	if !semver.MatchString(version) {
+	if !o.notes && !semver.MatchString(version) {
 		return fmt.Errorf("-version %q is not a semantic version like v0.5.0", version)
 	}
 	root, err := output("", "git", "rev-parse", "--show-toplevel")
@@ -96,6 +108,31 @@ func run(o opts) error {
 	if err != nil {
 		return err
 	}
+	core := slices.IndexFunc(mods, func(m module) bool { return m.Dir == "go" })
+	if core < 0 {
+		return errors.New("no core module in go/")
+	}
+	if o.notes {
+		prev, err := previousVersion(root, mods[core], "v999999.0.0")
+		if err != nil {
+			return err
+		}
+		chs, err := changesSince(root, mods[core], prev)
+		if err != nil {
+			return err
+		}
+		fmt.Print(renderChangelog(repoURL(mods[core].Path), "Unreleased", "", chs))
+		return nil
+	}
+	prev, err := previousVersion(root, mods[core], version)
+	if err != nil {
+		return err
+	}
+	chs, err := changesSince(root, mods[core], prev)
+	if err != nil {
+		return err
+	}
+	notes := renderChangelog(repoURL(mods[core].Path), version, time.Now().Format(time.DateOnly), chs)
 	if major := strings.SplitN(strings.TrimPrefix(version, "v"), ".", 2)[0]; major != "0" && major != "1" {
 		for _, m := range mods {
 			if !strings.HasSuffix(m.Path, "/v"+major) {
@@ -123,9 +160,12 @@ func run(o opts) error {
 		{"main matches " + remote, false, func() error { return checkRemote(root, remote) }},
 		{"CI on HEAD", o.skipCI, func() error { return checkCI(root) }},
 		{"API compatibility (gorelease)", o.skipAPI, func() error { return checkAPI(root, mods, version) }},
+		{"version fits the commits since " + cmp.Or(prev, "the start"), false, func() error { return checkBump(prev, version, chs) }},
 	}
+	fmt.Println("\nChangelog:")
+	fmt.Println(indent(notes))
 	var failed []string
-	fmt.Println("\nChecks:")
+	fmt.Println("Checks:")
 	for i, c := range checks {
 		if c.skip {
 			fmt.Printf("  - %s: skipped\n", c.name)
@@ -170,16 +210,18 @@ func run(o opts) error {
 			return undo(err)
 		}
 	}
-	if dirty, err := output(root, "git", "status", "--porcelain"); err != nil {
-		return err
-	} else if dirty != "" {
-		msg := "chore(release): require " + version + " between modules"
-		if len(o.trailers) > 0 {
-			msg += "\n\n" + strings.Join(o.trailers, "\n")
-		}
-		if _, err := output(root, "git", "commit", "-qam", msg); err != nil {
-			return err
-		}
+	if err := prependChangelog(filepath.Join(root, "go", "CHANGELOG.md"), notes); err != nil {
+		return undo(err)
+	}
+	if _, err := output(root, "git", "add", "-A", "go"); err != nil {
+		return undo(err)
+	}
+	msg := "chore(release): " + version + "\n\nRequire " + version + " between modules and add it to go/CHANGELOG.md."
+	if len(o.trailers) > 0 {
+		msg += "\n\n" + strings.Join(o.trailers, "\n")
+	}
+	if _, err := output(root, "git", "commit", "-qm", msg); err != nil {
+		return undo(err)
 	}
 	var tags []string
 	for _, m := range mods {
@@ -196,19 +238,47 @@ func run(o opts) error {
 	fmt.Println("Pushed main and", strings.Join(tags, ", "))
 
 	if ghRelease {
-		for i, tag := range tags {
-			latest := "--latest=false"
-			if i == 0 {
-				latest = "--latest"
+		_, body, _ := strings.Cut(notes, "\n") // the title is the release name
+		coreTag := mods[core].Tag(version)
+		for _, tag := range tags {
+			args := []string{"release", "create", tag, "--verify-tag", "--title", tag}
+			if tag == coreTag {
+				args = append(args, "--latest", "--notes", strings.TrimSpace(body))
+			} else {
+				args = append(args, "--latest=false", "--notes", "Released together with "+coreTag+"; see its notes.")
 			}
-			if _, err := output(root, "gh", "release", "create", tag, "--verify-tag", "--generate-notes",
-				"--title", tag, latest); err != nil {
+			if _, err := output(root, "gh", args...); err != nil {
 				return err
 			}
 		}
-		fmt.Println("Created GitHub releases; edit their notes on GitHub.")
+		fmt.Println("Created GitHub releases.")
 	}
 	return nil
+}
+
+// changesSince returns the changes merged after core's release prev (all
+// history when prev is empty).
+func changesSince(root string, core module, prev string) ([]change, error) {
+	from := ""
+	if prev != "" {
+		from = core.Tag(prev)
+	}
+	commits, err := releaseCommits(root, from, "HEAD")
+	if err != nil {
+		return nil, err
+	}
+	return changes(commits), nil
+}
+
+// indent indents every non-empty line of s by two spaces.
+func indent(s string) string {
+	lines := strings.Split(strings.TrimRight(s, "\n"), "\n")
+	for i, l := range lines {
+		if l != "" {
+			lines[i] = "  " + l
+		}
+	}
+	return strings.Join(lines, "\n") + "\n"
 }
 
 // findModules returns the modules under go/ in root, skipping vendor and
