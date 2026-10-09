@@ -121,9 +121,15 @@ type GRPCConfig struct {
 
 type grpcIn struct {
 	fx.In
-	Config GRPCConfig `optional:"true"`
-	Checks *health.Checker
+	Config  GRPCConfig `optional:"true"`
+	Checks  *health.Checker
+	Options []grpcserver.Option `group:"commonfx.grpc.options"`
 }
+
+// GRPCServerOptions is the value group of grpcserver.Option values that
+// [GRPCServer] applies, for options built from other dependencies (see
+// [GRPCJWTAuth]).
+const GRPCServerOptions = `group:"commonfx.grpc.options"`
 
 // GRPCServer provides a *grpc.Server from grpcserver.New, with the graph's
 // logger and telemetry and the health service from the health.Checker, for
@@ -133,7 +139,8 @@ type grpcIn struct {
 func GRPCServer(opts ...grpcserver.Option) fx.Option {
 	return fx.Module("commonfx.grpc",
 		fx.Provide(func(in grpcIn, t *telemetry) *grpc.Server {
-			return grpcserver.New(append(append(t.grpcServer(), grpcserver.WithHealth(in.Checks)), opts...)...)
+			all := append(append(t.grpcServer(), grpcserver.WithHealth(in.Checks)), in.Options...)
+			return grpcserver.New(append(all, opts...)...)
 		}),
 		fx.Invoke(func(lc fx.Lifecycle, in grpcIn, srv *grpc.Server, g *graceful.Manager) {
 			addr := in.Config.Addr

@@ -413,6 +413,17 @@ metrics), creates them on a real Prometheus provider, scrapes the exposed names 
 every query reads only those, with a `$job` selector per metric. `observability/profiling`
 registers net/http/pprof on a mux; `ADMIN_PPROF=true` serves it on the fx admin port, for go tool
 pprof and Grafana Alloy's `pyroscope.scrape`.
+### auth/jwtauth — ✅ implemented
+`jwtauth.New(ctx, cfg)` verifies OAuth/OIDC JWTs against the issuer's JWKS: discovery from the
+issuer (or `JWKS_URL`), keys fetched at startup (fail fast), refreshed every 15m and on an unknown
+`kid` (rate-limited to one per 30s; cached keys survive an outage). Verified: signature,
+asymmetric algorithm allow-list that must match the key family and the JWK's `alg` (no `none`, no
+HMAC with a public key), `use: enc` keys ignored, RSA ≥ 2048 bits, EC points on the curve, issuer,
+audience (required), `exp` (required), `nbf`, `iat` with leeway. Failures are Unauthorized with a
+generic public message; metrics `auth.tokens{outcome}` and `auth.jwks.refreshes{outcome}`.
+Adapters: `jwtauth.HTTP(v)` for `httpserver.Auth` (Echo via `echo.WrapMiddleware`),
+`RequireScope`/`CheckScopes`, `grpcserver.Bearer(v.Authenticate)`; fx: `JWTAuth`, `GRPCJWTAuth`
+(through the new `GRPCServerOptions` group). Mutation-checked tests against a fake provider.
 
 ### coordination — ✅ implemented
 **idempotency**: `idempotency.Do[T](ctx, store, key, fn, opts...)` / `DoOutcome` (reports

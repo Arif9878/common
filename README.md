@@ -28,6 +28,7 @@ It requires **Go 1.26** or newer. Every package emits OpenTelemetry traces and m
 | | [`transport/http/httpclient`](go/transport/http/httpclient) | Pooling, safe retries, circuit breaker |
 | | [`transport/http/echoadapter`](go/transport/http/echoadapter) | The same middleware and errors for Echo (the organization's standard framework) |
 | gRPC | [`transport/grpc`](go/transport/grpc) | `grpcserver`, `grpcclient`, `grpcstatus` (error kinds ↔ status codes) |
+| Auth | [`auth/jwtauth`](go/auth/jwtauth) | Verify OAuth/OIDC JWTs (Keycloak, Auth0, Okta, Entra ID, …) with JWKS discovery and key rotation; scopes; HTTP, Echo and gRPC |
 | Secrets | [`secret`](go/secret), [`secret/rotation`](go/secret/rotation), [`secret/vault`](go/secret/vault) | Provider-neutral secrets, zero-downtime credential rotation, Vault |
 | Datastores | [`datastore/postgres`](go/datastore/postgres), [`datastore/redis`](go/datastore/redis) | pgx and go-redis clients with telemetry, health and credential rotation |
 | Messaging | [`messaging/kafka`](go/messaging/kafka) | franz-go producer and consumer: at-least-once, per-partition order, bounded concurrency, batches, DLQ, idempotency; [`kafkaproto`](go/messaging/kafka/kafkaproto) for Protobuf with a Schema Registry |
@@ -108,6 +109,35 @@ fx.New(
 	commonfx.Ready(), // always last
 ).Run()
 ```
+
+## Authentication
+
+`auth/jwtauth` verifies bearer tokens issued by your identity provider:
+
+```go
+type Config struct {
+	Auth jwtauth.Config `envPrefix:"AUTH_"` // AUTH_ISSUER, AUTH_AUDIENCE (both required)
+}
+
+v, err := jwtauth.New(ctx, cfg.Auth) // fetches the keys now: a wrong issuer fails startup
+e.Use(echo.WrapMiddleware(httpserver.Auth(jwtauth.HTTP(v))))                              // Echo, or httpserver.Auth for net/http
+e.POST("/orders", create, echo.WrapMiddleware(jwtauth.RequireScope("orders:write")))      // 403 without the scope
+grpcserver.New(grpcserver.WithAuth(grpcserver.Bearer(v.Authenticate)))                     // gRPC
+claims, _ := jwtauth.FromContext(ctx)                                                      // claims.Subject, claims.HasScope
+```
+
+With fx, use `commonfx.JWTAuth()`, which provides the verifier, and `commonfx.GRPCJWTAuth()` to protect the gRPC server.
+
+- **Keys:** keys are discovered from `AUTH_ISSUER/.well-known/openid-configuration` (or set with `AUTH_JWKS_URL`) and refreshed every 15 minutes.
+- **Key rotation:** a token with an unknown key ID triggers an immediate refresh, at most every 30 seconds.
+- **Provider outage:** if the provider is unreachable, the cached keys stay in use.
+- **Checks:**
+  - signature;
+  - algorithm, which must be asymmetric and match the key, so `none` and HMAC-with-public-key tokens are rejected;
+  - issuer;
+  - audience;
+  - expiry, which is required, and not-before, with leeway.
+- **Errors:** failures are 401 (gRPC `UNAUTHENTICATED`) without details; the reason is logged and counted in `auth.tokens`.
 
 ## Observability backends
 
@@ -276,7 +306,7 @@ The core module holds the light packages. Each heavy integration is its own modu
 
 | Module (`github.com/Arif9878/common/go/…`) | Brings in |
 |---|---|
-| `go` (core) | errors, config, observability, lifecycle, health, resilience, concurrency, HTTP, secret, idempotency and lock interfaces, featureflag, testkit |
+| `go` (core) | errors, config, observability, lifecycle, health, resilience, concurrency, HTTP, auth/jwtauth, secret, idempotency and lock interfaces, featureflag, testkit |
 | `go/datastore/postgres` | pgx |
 | `go/datastore/redis` | go-redis |
 | `go/idempotency/pgstore`, `go/lock/pglock` | PostgreSQL implementations |

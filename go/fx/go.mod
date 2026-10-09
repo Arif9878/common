@@ -14,6 +14,7 @@ require (
 	github.com/Arif9878/common/go/testkit/pgtest v0.6.1
 	github.com/Arif9878/common/go/transport/grpc v0.6.1
 	github.com/alicebob/miniredis/v2 v2.39.0
+	github.com/golang-jwt/jwt/v5 v5.3.1
 	github.com/hashicorp/vault/api v1.23.0
 	github.com/labstack/echo/v4 v4.16.0
 	github.com/twmb/franz-go v1.22.1
@@ -25,6 +26,7 @@ require (
 	go.opentelemetry.io/otel/trace v1.47.0
 	go.uber.org/fx v1.24.0
 	google.golang.org/grpc v1.84.0
+	google.golang.org/protobuf v1.36.12
 )
 
 require (
@@ -110,7 +112,6 @@ require (
 	golang.org/x/time v0.16.0 // indirect
 	google.golang.org/genproto/googleapis/api v0.0.0-20261005182115-fad411399dd8 // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20261005182115-fad411399dd8 // indirect
-	google.golang.org/protobuf v1.36.12 // indirect
 )
 
 // Development: build against the modules in this repository. Consumers
