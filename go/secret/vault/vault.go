@@ -286,7 +286,6 @@ func classify(ctx context.Context, operation, path string, err error) error {
 	return kind.New(msg)
 }
 
-// Get reads the secret at path. It implements secret.Provider.
 // HealthCheck reports whether Vault answers and is initialized and
 // unsealed (standbys count as healthy: they forward requests). It matches
 // health.Check; register it as non-critical, since cached credentials keep
@@ -307,6 +306,7 @@ func (c *Client) HealthCheck(ctx context.Context) error {
 	})
 }
 
+// Get reads the secret at path. It implements secret.Provider.
 func (c *Client) Get(ctx context.Context, path string) (secret.Secret, error) {
 	var out secret.Secret
 	err := c.observe(ctx, "read", path, func(ctx context.Context) error {
