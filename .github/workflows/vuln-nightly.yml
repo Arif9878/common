@@ -1,7 +1,8 @@
 name: vuln-nightly
 
-# Vulnerabilities are published between pull requests; check main every
-# night with the newest Go, and keep one open issue while any is found.
+# Every night, on main: govulncheck with the newest Go (vulnerabilities are
+# published between pull requests), and a longer fuzzing run than CI's seed
+# corpora. Each keeps one open issue while it finds something.
 on:
   schedule:
     - cron: "17 2 * * *"
@@ -43,3 +44,29 @@ jobs:
           else
             gh issue create --title "$title" --body "$body"
           fi
+
+  fuzz:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version: stable
+          check-latest: true
+          cache-dependency-path: go/**/go.sum
+      - id: fuzz
+        run: make fuzz FUZZTIME=2m
+      - if: failure() && steps.fuzz.outcome == 'failure'
+        uses: actions/upload-artifact@v4
+        with:
+          name: fuzz-failures
+          path: go/**/testdata/fuzz/
+      - if: failure() && steps.fuzz.outcome == 'failure'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          title="fuzz: failing input on main"
+          body="The nightly fuzzing run found a failing input: $RUN_URL. The inputs are in the fuzz-failures artifact; add them under the package's testdata/fuzz with the fix."
+          issue=$(gh issue list --state open --search "\"$title\" in:title" --json number -q '.[0].number')
+          if [ -n "$issue" ]; then gh issue comment "$issue" --body "$body"; else gh issue create --title "$title" --body "$body"; fi

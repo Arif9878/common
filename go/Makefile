@@ -11,7 +11,7 @@ define each
 	@set -e; for m in $(MODULES); do echo "== $$m"; (cd $$m && $(1)); done
 endef
 
-.PHONY: check tidy vet lint test cover-summary vuln envdoc envdoc-check examples test-kafka release
+.PHONY: check tidy vet lint test cover-summary vuln fuzz envdoc envdoc-check examples test-kafka release
 
 check: tidy vet lint envdoc-check test vuln examples
 
@@ -51,6 +51,16 @@ envdoc:
 
 envdoc-check:
 	go run ./internal/envdoc -check
+
+# fuzz runs every Fuzz* target in every module for FUZZTIME each (the seed
+# corpora also run in make test). A failing input is saved under the
+# package's testdata/fuzz; commit it as a regression test with the fix.
+FUZZTIME ?= 30s
+
+fuzz:
+	@set -e; for m in $(MODULES); do (cd $$m && go test -list '^Fuzz' ./... | \
+		awk '/^Fuzz/ {n[++c] = $$1} /^ok/ {for (i = 1; i <= c; i++) print $$2, n[i]; c = 0}' | \
+		while read -r pkg name; do echo "== $$pkg $$name"; go test -run '^$$' -fuzz "^$$name\$$" -fuzztime $(FUZZTIME) $$pkg; done); done
 
 vuln:
 	$(call each,go run golang.org/x/vuln/cmd/govulncheck@$(GOVULNCHECK_VERSION) ./...)
