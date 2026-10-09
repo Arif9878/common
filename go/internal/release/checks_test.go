@@ -73,3 +73,36 @@ func TestPreviousVersion(t *testing.T) {
 		t.Errorf("new module previous = %q", got)
 	}
 }
+
+func TestNeedsUnreleasedAPI(t *testing.T) {
+	const prefix = "github.com/Arif9878/common/go"
+	tests := map[string]struct {
+		out  string
+		want bool
+	}{
+		"missing package of ours": {`gorelease: preparing to load packages for github.com/Arif9878/common/go/fx: looking for missing dependencies: go: -d flag is deprecated. -d=true is a no-op
+go: gorelease-load-module imports
+	github.com/Arif9878/common/go/fx imports
+	github.com/Arif9878/common/go/validation: cannot find module providing package github.com/Arif9878/common/go/validation
+exit status 1`, true},
+		"missing outside package": {`go: gorelease-load-module imports
+	github.com/Arif9878/common/go/fx imports
+	example.com/other: cannot find module providing package example.com/other`, false},
+		"undefined identifiers": {`# github.com/Arif9878/common/go/transport/grpc/grpcstatus
+## errors in release version:
+grpcstatus/grpcstatus.go:163:42: undefined: errors.FieldError
+grpcstatus/grpcstatus.go:107:22: undefined: errors.Fields
+
+# summary
+v0.7.0 is not a valid semantic version for this release.`, true},
+		"other type errors": {`## errors in release version:
+x/x.go:1:2: cannot use s (variable of type string) as int value
+x/x.go:3:4: undefined: errors.Fields`, false},
+		"plain incompatible change": {"## incompatible changes\nFoo: removed\n\n# summary\nSuggested version: v0.8.0", false},
+	}
+	for name, tc := range tests {
+		if got := needsUnreleasedAPI(tc.out, prefix); got != tc.want {
+			t.Errorf("%s: needsUnreleasedAPI = %v, want %v", name, got, tc.want)
+		}
+	}
+}

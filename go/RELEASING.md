@@ -22,7 +22,7 @@ Before changing anything, the tool runs these checks, and the dry run shows thei
 | Working tree, branch and tags | the tree has changes, you're not on `main`, or a tag already exists |
 | `main` matches the remote | local `main` is behind or ahead of the remote's `main` (pull or push first) |
 | CI on HEAD | a GitHub check on the commit failed, is still running, or hasn't started (needs `gh`; `-skip-ci` turns it off) |
-| API compatibility | `gorelease` finds incompatible API changes and the version only bumps the patch number. Before v1.0, incompatible changes need at least a minor version. New API in a patch release is reported but allowed. Modules without a previous release are skipped. `-skip-api-check` turns it off. |
+| API compatibility | `gorelease` finds incompatible API changes and the version only bumps the patch number. Before v1.0, incompatible changes need at least a minor version. New API in a patch release is reported but allowed. Modules without a previous release are skipped. gorelease ignores `replace`, so a module using API that its in-repository requirements add in the same release (for example `go/fx` using a new core package) can't be loaded against them; it is reported as not checked, and the modules providing that API are checked themselves. `-skip-api-check` turns it off. |
 | Version fits the commits | a commit since the previous release is breaking and the version is too small: before v1.0 it needs a new minor version, from v1 on a new major version |
 
 It also rejects v2 and later until the module paths carry the `/vN` suffix Go requires.
