@@ -3,16 +3,16 @@ module github.com/Arif9878/common/go/fx
 go 1.26.0
 
 require (
-	github.com/Arif9878/common/go v0.6.0
-	github.com/Arif9878/common/go/datastore/postgres v0.6.0
-	github.com/Arif9878/common/go/datastore/redis v0.6.0
-	github.com/Arif9878/common/go/idempotency/pgstore v0.6.0
-	github.com/Arif9878/common/go/idempotency/redisstore v0.6.0
-	github.com/Arif9878/common/go/messaging/kafka v0.6.0
-	github.com/Arif9878/common/go/messaging/outbox v0.6.0
-	github.com/Arif9878/common/go/secret/vault v0.6.0
-	github.com/Arif9878/common/go/testkit/pgtest v0.6.0
-	github.com/Arif9878/common/go/transport/grpc v0.6.0
+	github.com/Arif9878/common/go v0.6.1
+	github.com/Arif9878/common/go/datastore/postgres v0.6.1
+	github.com/Arif9878/common/go/datastore/redis v0.6.1
+	github.com/Arif9878/common/go/idempotency/pgstore v0.6.1
+	github.com/Arif9878/common/go/idempotency/redisstore v0.6.1
+	github.com/Arif9878/common/go/messaging/kafka v0.6.1
+	github.com/Arif9878/common/go/messaging/outbox v0.6.1
+	github.com/Arif9878/common/go/secret/vault v0.6.1
+	github.com/Arif9878/common/go/testkit/pgtest v0.6.1
+	github.com/Arif9878/common/go/transport/grpc v0.6.1
 	github.com/alicebob/miniredis/v2 v2.39.0
 	github.com/hashicorp/vault/api v1.23.0
 	github.com/labstack/echo/v4 v4.16.0

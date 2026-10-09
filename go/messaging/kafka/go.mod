@@ -21,8 +21,8 @@ replace (
 )
 
 require (
-	github.com/Arif9878/common/go v0.6.0
-	github.com/Arif9878/common/go/idempotency/redisstore v0.6.0
+	github.com/Arif9878/common/go v0.6.1
+	github.com/Arif9878/common/go/idempotency/redisstore v0.6.1
 	github.com/alicebob/miniredis/v2 v2.39.0
 	github.com/redis/go-redis/v9 v9.23.0
 	github.com/twmb/franz-go v1.22.1
@@ -39,7 +39,7 @@ require (
 )
 
 require (
-	github.com/Arif9878/common/go/datastore/redis v0.6.0 // indirect
+	github.com/Arif9878/common/go/datastore/redis v0.6.1 // indirect
 	github.com/caarlos0/env/v11 v11.4.1 // indirect
 	github.com/cenkalti/backoff/v5 v5.0.3 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
