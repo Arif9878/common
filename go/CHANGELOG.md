@@ -4,6 +4,30 @@ All modules of this repository are released together with one version
 (see [RELEASING.md](RELEASING.md)). The release tool writes each section
 from the Conventional Commits merged since the previous release.
 
+## [v0.7.0](https://github.com/Arif9878/common/releases/tag/go/v0.7.0) - 2026-10-09
+
+### Breaking changes
+
+- remove the legacy v0.1 packages ([#45](https://github.com/Arif9878/common/pull/45))
+
+  Services importing these packages must migrate (see go/MIGRATION.md) or stay on go/v0.6.x.
+
+### Features
+
+- **observability:** ship a Grafana dashboard, alert rules and pprof ([#36](https://github.com/Arif9878/common/pull/36))
+- **auth:** verify OAuth/OIDC JWTs with jwtauth ([#35](https://github.com/Arif9878/common/pull/35))
+- cover auth, Redis and Kafka client in dashboards; Vault in fx ([#38](https://github.com/Arif9878/common/pull/38))
+- **auth:** add oauth2client for service-to-service tokens ([#40](https://github.com/Arif9878/common/pull/40))
+- **postgres:** add migrate, goose migrations one replica at a time ([#41](https://github.com/Arif9878/common/pull/41))
+- **schedule:** run cron and interval jobs on one replica ([#42](https://github.com/Arif9878/common/pull/42))
+- **redis:** add cache, a read-through cache with stampede protection ([#43](https://github.com/Arif9878/common/pull/43))
+- **validation:** report every invalid field over HTTP and gRPC ([#44](https://github.com/Arif9878/common/pull/44))
+- **release:** write CHANGELOG.md and release notes from conventional commits ([#47](https://github.com/Arif9878/common/pull/47))
+
+### Fixes
+
+- **release:** don't fail the API check on API this release adds ([#48](https://github.com/Arif9878/common/pull/48))
+
 ## [v0.6.1](https://github.com/Arif9878/common/releases/tag/go/v0.6.1) - 2026-10-09
 
 ### Features

@@ -21,7 +21,7 @@ replace (
 )
 
 require (
-	github.com/Arif9878/common/go v0.6.1
+	github.com/Arif9878/common/go v0.7.0
 	go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc v0.72.0
 	go.opentelemetry.io/otel v1.47.0
 	go.opentelemetry.io/otel/metric v1.47.0

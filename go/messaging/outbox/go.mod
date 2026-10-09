@@ -21,10 +21,10 @@ replace (
 )
 
 require (
-	github.com/Arif9878/common/go v0.6.1
-	github.com/Arif9878/common/go/datastore/postgres v0.6.1
-	github.com/Arif9878/common/go/messaging/kafka v0.6.1
-	github.com/Arif9878/common/go/testkit/pgtest v0.6.1
+	github.com/Arif9878/common/go v0.7.0
+	github.com/Arif9878/common/go/datastore/postgres v0.7.0
+	github.com/Arif9878/common/go/messaging/kafka v0.7.0
+	github.com/Arif9878/common/go/testkit/pgtest v0.7.0
 	github.com/jackc/pgx/v5 v5.11.0
 	github.com/twmb/franz-go v1.22.1
 	github.com/twmb/franz-go/pkg/kadm v1.19.0
