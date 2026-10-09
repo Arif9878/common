@@ -2,7 +2,8 @@
 # packages (github.com/Arif9878/common/go). Load them as a rule file, or
 # with the Prometheus Operator as a PrometheusRule's spec.groups. Every
 # rule groups by job, the service; thresholds are starting points, tune
-# them per service with an override file or by copying the rule.
+# them per service with an override file or by copying the rule. Every
+# rule links its runbook in RUNBOOKS.md (annotation runbook_url).
 groups:
   - name: common-http
     rules:
@@ -15,6 +16,7 @@ groups:
         annotations:
           summary: "{{ $labels.job }}: more than 5% of HTTP requests fail with 5xx"
           description: "{{ $value | humanizePercentage }} of requests to {{ $labels.job }} answered 5xx over the last 10 minutes."
+          runbook_url: "https://github.com/Arif9878/common/blob/main/go/observability/dashboards/RUNBOOKS.md#httpservererrorratehigh"
       - alert: HTTPServerLatencyHigh
         expr: |
           histogram_quantile(0.99, sum by (job, le) (rate(http_server_request_duration_seconds_bucket[5m]))) > 1
@@ -23,6 +25,7 @@ groups:
         annotations:
           summary: "{{ $labels.job }}: HTTP p99 latency above 1s"
           description: "p99 latency is {{ $value | humanizeDuration }}."
+          runbook_url: "https://github.com/Arif9878/common/blob/main/go/observability/dashboards/RUNBOOKS.md#httpserverlatencyhigh"
 
   - name: common-grpc
     rules:
@@ -35,6 +38,7 @@ groups:
         annotations:
           summary: "{{ $labels.job }}: more than 5% of gRPC calls fail with server errors"
           description: "{{ $value | humanizePercentage }} of calls ended Internal, Unknown, Unavailable, DeadlineExceeded or DataLoss."
+          runbook_url: "https://github.com/Arif9878/common/blob/main/go/observability/dashboards/RUNBOOKS.md#grpcservererrorratehigh"
 
   - name: common-kafka
     rules:
@@ -45,6 +49,7 @@ groups:
         annotations:
           summary: "{{ $labels.job }}: Kafka consumer {{ $labels.group }} stopped a partition"
           description: "A record failed for good and its partition is paused: nothing after it is processed until the service restarts. Fix the record or the handler; see the error logs."
+          runbook_url: "https://github.com/Arif9878/common/blob/main/go/observability/dashboards/RUNBOOKS.md#kafkapartitionstopped"
       - alert: KafkaConsumerLagHigh
         expr: sum by (job, topic) (kafka_consumer_lag) > 10000
         for: 15m
@@ -52,6 +57,7 @@ groups:
         annotations:
           summary: "{{ $labels.job }}: consumer lag on {{ $labels.topic }} above 10000 records"
           description: "The consumer is {{ $value }} records behind. It is slower than the producers, stuck, or under-provisioned."
+          runbook_url: "https://github.com/Arif9878/common/blob/main/go/observability/dashboards/RUNBOOKS.md#kafkaconsumerlaghigh"
       - alert: KafkaRecordsDeadLettered
         expr: sum by (job, topic) (rate(kafka_consumer_records_total{outcome="dlq"}[5m])) > 0
         for: 5m
@@ -59,6 +65,7 @@ groups:
         annotations:
           summary: "{{ $labels.job }}: records from {{ $labels.topic }} go to the dead-letter topic"
           description: "Records failed for good and were dead-lettered; they need to be inspected and replayed."
+          runbook_url: "https://github.com/Arif9878/common/blob/main/go/observability/dashboards/RUNBOOKS.md#kafkarecordsdeadlettered"
       - alert: KafkaProduceErrors
         expr: sum by (job, topic) (rate(kafka_producer_records_total{outcome!="ok"}[5m])) > 0
         for: 10m
@@ -66,6 +73,7 @@ groups:
         annotations:
           summary: "{{ $labels.job }}: publishing to {{ $labels.topic }} fails"
           description: "Records are not acknowledged by the brokers."
+          runbook_url: "https://github.com/Arif9878/common/blob/main/go/observability/dashboards/RUNBOOKS.md#kafkaproduceerrors"
 
   - name: common-outbox
     rules:
@@ -76,6 +84,7 @@ groups:
         annotations:
           summary: "{{ $labels.job }}: the outbox relay for {{ $labels.table }} keeps failing"
           description: "Events are kept in the outbox but not published; Kafka or PostgreSQL is unavailable to the relay."
+          runbook_url: "https://github.com/Arif9878/common/blob/main/go/observability/dashboards/RUNBOOKS.md#outboxrelayfailing"
       - alert: OutboxNoActiveRelay
         expr: sum by (job, table) (outbox_relay_active) < 1
         for: 5m
@@ -83,6 +92,7 @@ groups:
         annotations:
           summary: "{{ $labels.job }}: no replica relays the outbox {{ $labels.table }}"
           description: "No replica holds the relay lock, so events are not published."
+          runbook_url: "https://github.com/Arif9878/common/blob/main/go/observability/dashboards/RUNBOOKS.md#outboxnoactiverelay"
       - alert: OutboxPublishLagHigh
         expr: |
           histogram_quantile(0.99, sum by (job, le) (rate(outbox_publish_lag_seconds_bucket[5m]))) > 60
@@ -91,6 +101,7 @@ groups:
         annotations:
           summary: "{{ $labels.job }}: outbox events take over a minute to publish"
           description: "p99 time from writing an event to its publication is {{ $value | humanizeDuration }}."
+          runbook_url: "https://github.com/Arif9878/common/blob/main/go/observability/dashboards/RUNBOOKS.md#outboxpublishlaghigh"
 
   - name: common-postgres
     rules:
@@ -101,6 +112,7 @@ groups:
         annotations:
           summary: "{{ $labels.job }}: requests wait for PostgreSQL connections ({{ $labels.db_client_connection_pool_name }})"
           description: "The pool is exhausted: raise POSTGRES_MAX_CONNS (within the server's max_connections) or find slow queries."
+          runbook_url: "https://github.com/Arif9878/common/blob/main/go/observability/dashboards/RUNBOOKS.md#postgrespoolexhausted"
       - alert: PostgresPoolSaturated
         expr: |
           sum by (job, db_client_connection_pool_name) (db_client_connection_count{db_client_connection_state="used"})
@@ -110,6 +122,7 @@ groups:
         annotations:
           summary: "{{ $labels.job }}: PostgreSQL pool {{ $labels.db_client_connection_pool_name }} over 90% used"
           description: "{{ $value | humanizePercentage }} of the pool's connections are in use."
+          runbook_url: "https://github.com/Arif9878/common/blob/main/go/observability/dashboards/RUNBOOKS.md#postgrespoolsaturated"
 
   - name: common-resilience
     rules:
@@ -120,6 +133,7 @@ groups:
         annotations:
           summary: "{{ $labels.job }}: circuit breaker {{ $labels.breaker }} is open"
           description: "Calls to the dependency fail fast because it kept failing."
+          runbook_url: "https://github.com/Arif9878/common/blob/main/go/observability/dashboards/RUNBOOKS.md#circuitbreakeropen"
       - alert: RetriesExhausted
         expr: sum by (job, operation) (rate(retry_attempts_total{outcome="exhausted"}[5m])) > 0.1
         for: 10m
@@ -127,6 +141,7 @@ groups:
         annotations:
           summary: "{{ $labels.job }}: retries of {{ $labels.operation }} run out"
           description: "Operations fail after every retry attempt."
+          runbook_url: "https://github.com/Arif9878/common/blob/main/go/observability/dashboards/RUNBOOKS.md#retriesexhausted"
       - alert: IdempotencyStoreErrors
         expr: sum by (job, operation) (rate(idempotency_calls_total{outcome="store_error"}[5m])) > 0
         for: 10m
@@ -134,6 +149,7 @@ groups:
         annotations:
           summary: "{{ $labels.job }}: the idempotency store fails for {{ $labels.operation }}"
           description: "Operations cannot be deduplicated: Redis or PostgreSQL is unavailable."
+          runbook_url: "https://github.com/Arif9878/common/blob/main/go/observability/dashboards/RUNBOOKS.md#idempotencystoreerrors"
 
   - name: common-secrets
     rules:
@@ -144,6 +160,7 @@ groups:
         annotations:
           summary: "{{ $labels.job }}: Vault token expires in under 5 minutes"
           description: "Token renewal and re-login are failing; secrets will become unreadable."
+          runbook_url: "https://github.com/Arif9878/common/blob/main/go/observability/dashboards/RUNBOOKS.md#vaulttokenexpiring"
       - alert: CredentialRotationFailing
         expr: sum by (job, resource) (rate(rotation_attempts_total{outcome!="success"}[15m])) > 0
         for: 15m
@@ -151,6 +168,7 @@ groups:
         annotations:
           summary: "{{ $labels.job }}: rotating credentials for {{ $labels.resource }} fails"
           description: "The current credential stays in use until it expires; see the rotation logs."
+          runbook_url: "https://github.com/Arif9878/common/blob/main/go/observability/dashboards/RUNBOOKS.md#credentialrotationfailing"
       - alert: CredentialExpiring
         expr: min by (job, resource) (rotation_credential_ttl_seconds) < 120
         for: 2m
@@ -158,6 +176,7 @@ groups:
         annotations:
           summary: "{{ $labels.job }}: the credential for {{ $labels.resource }} expires in under 2 minutes"
           description: "Rotation has not replaced it; connections will fail when it expires."
+          runbook_url: "https://github.com/Arif9878/common/blob/main/go/observability/dashboards/RUNBOOKS.md#credentialexpiring"
 
   - name: common-auth
     rules:
@@ -168,6 +187,7 @@ groups:
         annotations:
           summary: "{{ $labels.job }}: tokens fail because the identity provider's keys cannot be fetched"
           description: "Tokens are signed with a key not in the cache, and the JWKS is unreachable: valid users are rejected."
+          runbook_url: "https://github.com/Arif9878/common/blob/main/go/observability/dashboards/RUNBOOKS.md#authkeysunavailable"
       - alert: AuthInvalidTokensHigh
         expr: |
           sum by (job) (rate(auth_tokens_total{outcome=~"invalid|unknown_key"}[5m]))
@@ -177,6 +197,7 @@ groups:
         annotations:
           summary: "{{ $labels.job }}: more than 20% of bearer tokens are invalid"
           description: "A misconfigured client, a wrong AUTH_AUDIENCE or AUTH_ISSUER, or an attack. Expired tokens are not counted."
+          runbook_url: "https://github.com/Arif9878/common/blob/main/go/observability/dashboards/RUNBOOKS.md#authinvalidtokenshigh"
       - alert: JWKSRefreshFailing
         expr: sum by (job) (increase(auth_jwks_refreshes_total{outcome="failed"}[30m])) > 0
         for: 30m
@@ -184,6 +205,7 @@ groups:
         annotations:
           summary: "{{ $labels.job }}: refreshing the identity provider's keys fails"
           description: "Cached keys are still used; a key rotation will reject tokens until the JWKS is reachable."
+          runbook_url: "https://github.com/Arif9878/common/blob/main/go/observability/dashboards/RUNBOOKS.md#jwksrefreshfailing"
 
   - name: common-redis
     rules:
@@ -194,6 +216,7 @@ groups:
         annotations:
           summary: "{{ $labels.job }}: commands time out waiting for a Redis connection"
           description: "The pool is too small (REDIS_POOL_SIZE) or Redis is slow."
+          runbook_url: "https://github.com/Arif9878/common/blob/main/go/observability/dashboards/RUNBOOKS.md#redispooltimeouts"
 
   - name: common-kafka-client
     rules:
@@ -204,3 +227,39 @@ groups:
         annotations:
           summary: "{{ $labels.job }}: connections to Kafka brokers fail"
           description: "Brokers are unreachable or reject the client (TLS or SASL)."
+          runbook_url: "https://github.com/Arif9878/common/blob/main/go/observability/dashboards/RUNBOOKS.md#kafkabrokerconnecterrors"
+
+  - name: common-jobs
+    rules:
+      - alert: ScheduledJobFailing
+        expr: sum by (job, job_name) (increase(schedule_runs_total{outcome=~"failed|panicked"}[30m])) > 0
+        for: 30m
+        labels: { severity: warning }
+        annotations:
+          summary: "{{ $labels.job }}: scheduled job {{ $labels.job_name }} keeps failing"
+          description: "{{ $value }} failed or panicked runs in 30 minutes; the job's work is not getting done."
+          runbook_url: "https://github.com/Arif9878/common/blob/main/go/observability/dashboards/RUNBOOKS.md#scheduledjobfailing"
+
+  - name: common-oauth2
+    rules:
+      - alert: OAuth2TokenRequestsFailing
+        expr: sum by (job, client) (rate(oauth2_token_requests_total{outcome!="ok"}[5m])) > 0
+        for: 10m
+        labels: { severity: critical }
+        annotations:
+          summary: "{{ $labels.job }}: getting OAuth2 tokens for {{ $labels.client }} fails"
+          description: "Calls to the service behind {{ $labels.client }} go out without a token and fail once the cached token expires."
+          runbook_url: "https://github.com/Arif9878/common/blob/main/go/observability/dashboards/RUNBOOKS.md#oauth2tokenrequestsfailing"
+
+  - name: common-cache
+    rules:
+      - alert: CacheRedisErrors
+        expr: |
+          sum by (job, cache) (rate(cache_requests_total{outcome="error"}[5m]))
+            / sum by (job, cache) (rate(cache_requests_total[5m])) > 0.05
+        for: 10m
+        labels: { severity: warning }
+        annotations:
+          summary: "{{ $labels.job }}: cache {{ $labels.cache }} cannot reach Redis"
+          description: "{{ $value | humanizePercentage }} of lookups fall back to the loader, which now carries the full load."
+          runbook_url: "https://github.com/Arif9878/common/blob/main/go/observability/dashboards/RUNBOOKS.md#cacherediserrors"

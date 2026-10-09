@@ -280,7 +280,7 @@ spec:
   - the Go runtime
 
   Pick the service with the `job` variable. Prometheus sets `job` when it scrapes; Mimir and Grafana Cloud derive it from `service.name` for OTLP.
-- **[`prometheus/alerts.yaml`](go/observability/dashboards/prometheus/alerts.yaml):** 23 alerting rules, each grouped by `job`, with a severity, summary and description:
+- **[`prometheus/alerts.yaml`](go/observability/dashboards/prometheus/alerts.yaml):** 26 alerting rules, each grouped by `job`, with a severity, summary, description and a `runbook_url` into [`RUNBOOKS.md`](go/observability/dashboards/RUNBOOKS.md) (what to check and what to do):
   - HTTP/gRPC error rate and latency
   - stopped Kafka partitions, consumer lag, dead-lettering, produce errors
   - a failing relay, no active relay, outbox lag
@@ -289,10 +289,11 @@ spec:
   - expiring Vault tokens and credentials, failing rotation
   - unreachable identity-provider keys, a spike of invalid tokens, failing JWKS refreshes
   - Redis pool timeouts, Kafka broker connection errors
+  - failing scheduled jobs, failing OAuth2 token requests, caches that can't reach Redis
 
   Load it as a rule file, or as a PrometheusRule's `spec.groups` with the Prometheus Operator. The thresholds are starting points.
 
-A test runs every query against the metric names the packages actually register, so a renamed metric breaks the build instead of leaving an empty panel or an alert that never fires. The files are also embedded in `dashboards.FS`, for provisioning tools.
+A test runs every query against the metric names the packages actually register, so a renamed metric breaks the build instead of leaving an empty panel or an alert that never fires; it also checks that every alert has a runbook. The files are also embedded in `dashboards.FS`, for provisioning tools.
 
 **Profiling.**
 
