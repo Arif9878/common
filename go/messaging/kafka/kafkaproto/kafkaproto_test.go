@@ -50,7 +50,7 @@ type fakeRegistry struct {
 	subjects map[string][]sr.SubjectSchema
 }
 
-func newFakeRegistry(t *testing.T) (*fakeRegistry, *sr.Client) {
+func newFakeRegistry(t testing.TB) (*fakeRegistry, *sr.Client) {
 	f := &fakeRegistry{ids: map[string]int{}, subjects: map[string][]sr.SubjectSchema{}}
 	srv := httptest.NewServer(f)
 	t.Cleanup(srv.Close)

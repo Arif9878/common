@@ -333,6 +333,7 @@ make test MODULES=messaging/kafka  # one module
 make test COVER=1 && make cover-summary   # coverage per module, counting every package a test exercises
 make envdoc                        # regenerate ENVIRONMENT.md after changing a configuration struct
 make examples                      # build, lint and test examples/ against this checkout
+make fuzz FUZZTIME=1m              # fuzz every parser of outside input (JWKS, tokens, Protobuf values, headers, redaction)
 ```
 
 Integration tests run against real infrastructure when it is configured, and are skipped otherwise:
@@ -343,4 +344,4 @@ Integration tests run against real infrastructure when it is configured, and are
 | `REDIS_TEST_ADDR=host:6379` | `datastore/redis`, `idempotency/redisstore`, `lock/redislock`. These also run on miniredis without it; with it, the Lua scripts run on real Redis. Keys get a random `commontest:` prefix. |
 | `KAFKA_TEST_BROKERS=host:9092` (`make test-kafka`) | `messaging/kafka`. Without it, the tests use an in-process fake. Tests create and delete their own `commontest-*` topics, so a shared broker is safe to use. |
 
-CI runs every module on Go 1.26 and 1.27, with PostgreSQL and Redis, reports coverage per module in the job summary, and runs the Kafka tests against a Redpanda container. A nightly job runs govulncheck on `main` with the newest Go and opens (or updates) an issue when it finds a vulnerability. Production packages must not import `testkit`; a lint rule enforces this.
+CI runs every module on Go 1.26 and 1.27, with PostgreSQL and Redis, reports coverage per module in the job summary, and runs the Kafka tests against a Redpanda container. A nightly job runs govulncheck on `main` with the newest Go and fuzzes every parser of outside input for two minutes each, opening (or updating) an issue when either finds something. Production packages must not import `testkit`; a lint rule enforces this.
