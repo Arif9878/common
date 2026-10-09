@@ -41,7 +41,7 @@ It requires **Go 1.26** or newer. Every package emits OpenTelemetry traces and m
 | Coordination | [`idempotency`](go/idempotency) | Run once per key; PostgreSQL and Redis stores |
 | | [`lock`](go/lock) | Leases with fencing tokens; PostgreSQL and Redis |
 | | [`featureflag`](go/featureflag) | Feature flags through OpenFeature |
-| Testing | [`testkit`](go/testkit) | Capture logs, metrics and spans in tests; `Eventually`; PostgreSQL test databases |
+| Testing | [`testkit`](go/testkit) | Capture logs, metrics and spans in tests; `Eventually`; PostgreSQL test databases ([`pgtest`](go/testkit/pgtest)); Redis ([`redistest`](go/datastore/redis/redistest): miniredis, or a real server with a per-test key prefix) and Kafka ([`kafkatest`](go/messaging/kafka/kafkatest): kfake, or real brokers with per-test topics and groups, deleted afterwards) |
 | Uber fx | [`fx`](go/fx) (separate module) | Provides all of the above to an fx application, with telemetry and shutdown wired in |
 
 **Start here:** [`examples/orders-service`](examples/orders-service) is a complete service built the intended way: fx, Echo, PostgreSQL with the transactional outbox, an idempotent Kafka consumer, OTLP observability, a Dockerfile, docker-compose with Grafana, and a Kubernetes manifest. [`go/ENVIRONMENT.md`](go/ENVIRONMENT.md) lists every configuration variable.
@@ -360,4 +360,4 @@ Integration tests run against real infrastructure when it is configured, and are
 | `REDIS_TEST_ADDR=host:6379` | `datastore/redis`, `idempotency/redisstore`, `lock/redislock`. These also run on miniredis without it; with it, the Lua scripts run on real Redis. Keys get a random `commontest:` prefix. |
 | `KAFKA_TEST_BROKERS=host:9092` (`make test-kafka`) | `messaging/kafka`. Without it, the tests use an in-process fake. Tests create and delete their own `commontest-*` topics, so a shared broker is safe to use. |
 
-CI runs every module on Go 1.26 and 1.27, with PostgreSQL and Redis, reports coverage per module in the job summary, and runs the Kafka tests against a Redpanda container. A nightly job runs govulncheck on `main` with the newest Go and fuzzes every parser of outside input for two minutes each, opening (or updating) an issue when either finds something. Production packages must not import `testkit`; a lint rule enforces this.
+CI runs every module on Go 1.26 and 1.27, with PostgreSQL and Redis, reports coverage per module in the job summary, and runs the Kafka tests against a Redpanda container. A nightly job runs govulncheck on `main` with the newest Go and fuzzes every parser of outside input for two minutes each, opening (or updating) an issue when either finds something. Production packages must not import `testkit`, `redistest` or `kafkatest`; a lint rule enforces this.

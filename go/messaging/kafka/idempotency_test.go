@@ -17,6 +17,7 @@ import (
 	"github.com/Arif9878/common/go/idempotency"
 	"github.com/Arif9878/common/go/idempotency/redisstore"
 	"github.com/Arif9878/common/go/messaging/kafka"
+	"github.com/Arif9878/common/go/messaging/kafka/kafkatest"
 	"github.com/Arif9878/common/go/resilience/retry"
 	"github.com/Arif9878/common/go/testkit"
 )
@@ -71,16 +72,16 @@ func (s *seen) get(v string) int {
 func byValue(_ string, r *kgo.Record) string { return "test:" + string(r.Value) }
 
 func TestIdempotencySkipsProcessedRecords(t *testing.T) {
-	k := newKafka(t, 2, "t")
+	k := kafkatest.New(t, 2, "t")
 	store := newRedisStore(t)
 	var kv []string
 	for i := range 20 {
 		kv = append(kv, "k"+strconv.Itoa(i%4), strconv.Itoa(i))
 	}
-	publish(t, newProducer(t, k.cfg), k.T("t"), kv...)
+	publish(t, newProducer(t, k.Config), k.Topic("t"), kv...)
 
 	var first seen
-	c1, err := kafka.NewConsumer(context.Background(), k.cfg, k.G("g1"), []string{k.T("t")},
+	c1, err := kafka.NewConsumer(context.Background(), k.Config, k.Group("g1"), []string{k.Topic("t")},
 		func(_ context.Context, r *kgo.Record) error { first.add(r); return nil },
 		quiet, kafka.WithIdempotency(kafka.Idempotency{Store: store, Key: byValue}))
 	if err != nil {
@@ -93,7 +94,7 @@ func TestIdempotencySkipsProcessedRecords(t *testing.T) {
 	// all are committed and counted as duplicates.
 	mp, metrics := testkit.NewMetrics(t)
 	var second seen
-	c2, err := kafka.NewConsumer(context.Background(), k.cfg, k.G("g2"), []string{k.T("t")},
+	c2, err := kafka.NewConsumer(context.Background(), k.Config, k.Group("g2"), []string{k.Topic("t")},
 		func(_ context.Context, r *kgo.Record) error { second.add(r); return nil },
 		quiet, kafka.WithMeterProvider(mp), kafka.WithIdempotency(kafka.Idempotency{Store: store, Key: byValue}))
 	if err != nil {
@@ -102,7 +103,7 @@ func TestIdempotencySkipsProcessedRecords(t *testing.T) {
 	running(t, c2)
 	testkit.Eventually(t, 30*time.Second, "20 duplicates", func() bool {
 		return metrics.Has("kafka.consumer.duplicates") &&
-			metrics.Sum("kafka.consumer.duplicates", attribute.String("topic", k.T("t"))) >= 20
+			metrics.Sum("kafka.consumer.duplicates", attribute.String("topic", k.Topic("t"))) >= 20
 	})
 	if n := second.total(); n != 0 {
 		t.Errorf("second delivery handled %d records, want 0", n)
@@ -113,7 +114,7 @@ func TestIdempotencySkipsProcessedRecords(t *testing.T) {
 }
 
 func TestIdempotencyBatchSkipsDuplicatesAndKeepsPartialProgress(t *testing.T) {
-	k := newKafka(t, 1, "t")
+	k := kafkatest.New(t, 1, "t")
 	store := newRedisStore(t)
 	ctx := context.Background()
 	// Records "2" and "5" were processed before (by another replica).
@@ -127,12 +128,12 @@ func TestIdempotencyBatchSkipsDuplicatesAndKeepsPartialProgress(t *testing.T) {
 	for i := range 10 {
 		kv = append(kv, "k", strconv.Itoa(i))
 	}
-	publish(t, newProducer(t, k.cfg), k.T("t"), kv...)
+	publish(t, newProducer(t, k.Config), k.Topic("t"), kv...)
 
 	var got seen
 	var once sync.Once
 	mp, metrics := testkit.NewMetrics(t)
-	c, err := kafka.NewBatchConsumer(ctx, k.cfg, k.G("g"), []string{k.T("t")},
+	c, err := kafka.NewBatchConsumer(ctx, k.Config, k.Group("g"), []string{k.Topic("t")},
 		func(_ context.Context, rs []*kgo.Record) error {
 			var err error
 			once.Do(func() {
@@ -199,7 +200,7 @@ func TestIdempotencyBatchSkipsDuplicatesAndKeepsPartialProgress(t *testing.T) {
 }
 
 func TestIdempotencyWaitsForRecordInProgress(t *testing.T) {
-	k := newKafka(t, 1, "t")
+	k := kafkatest.New(t, 1, "t")
 	store := newRedisStore(t)
 	ctx := context.Background()
 	// Another consumer is still handling record "1".
@@ -207,10 +208,10 @@ func TestIdempotencyWaitsForRecordInProgress(t *testing.T) {
 	if err != nil || !claimed {
 		t.Fatalf("claim: %v %v", claimed, err)
 	}
-	publish(t, newProducer(t, k.cfg), k.T("t"), "k", "0", "k", "1", "k", "2")
+	publish(t, newProducer(t, k.Config), k.Topic("t"), "k", "0", "k", "1", "k", "2")
 
 	var got seen
-	c, err := kafka.NewConsumer(ctx, k.cfg, k.G("g"), []string{k.T("t")},
+	c, err := kafka.NewConsumer(ctx, k.Config, k.Group("g"), []string{k.Topic("t")},
 		func(_ context.Context, r *kgo.Record) error { got.add(r); return nil },
 		quiet, kafka.WithRetry(retry.New(retry.WithMaxAttempts(1000), retry.WithConstantBackoff(20*time.Millisecond))),
 		kafka.WithIdempotency(kafka.Idempotency{Store: store, Key: byValue}))
@@ -236,13 +237,13 @@ func TestIdempotencyWaitsForRecordInProgress(t *testing.T) {
 }
 
 func TestIdempotencyReleasesClaimOnFailure(t *testing.T) {
-	k := newKafka(t, 1, "t")
+	k := kafkatest.New(t, 1, "t")
 	store := newRedisStore(t)
-	publish(t, newProducer(t, k.cfg), k.T("t"), "k", "0")
+	publish(t, newProducer(t, k.Config), k.Topic("t"), "k", "0")
 
 	var got seen
 	var attempts sync.Map
-	c, err := kafka.NewConsumer(context.Background(), k.cfg, k.G("g"), []string{k.T("t")},
+	c, err := kafka.NewConsumer(context.Background(), k.Config, k.Group("g"), []string{k.Topic("t")},
 		func(_ context.Context, r *kgo.Record) error {
 			n, _ := attempts.LoadOrStore(string(r.Value), new(int))
 			if *n.(*int)++; *n.(*int) == 1 {
@@ -282,7 +283,7 @@ func TestIdempotencyDefaultKeys(t *testing.T) {
 }
 
 func TestIdempotencyDuplicatesWithinOneBatch(t *testing.T) {
-	k := newKafka(t, 1, "t")
+	k := kafkatest.New(t, 1, "t")
 	// Each event is published twice in a row, so both copies land in the
 	// same batch.
 	var kv []string
@@ -290,10 +291,10 @@ func TestIdempotencyDuplicatesWithinOneBatch(t *testing.T) {
 		v := strconv.Itoa(i)
 		kv = append(kv, "k", v, "k", v)
 	}
-	publish(t, newProducer(t, k.cfg), k.T("t"), kv...)
+	publish(t, newProducer(t, k.Config), k.Topic("t"), kv...)
 
 	var got seen
-	c, err := kafka.NewBatchConsumer(context.Background(), k.cfg, k.G("g"), []string{k.T("t")},
+	c, err := kafka.NewBatchConsumer(context.Background(), k.Config, k.Group("g"), []string{k.Topic("t")},
 		func(_ context.Context, rs []*kgo.Record) error { got.add(rs...); return nil },
 		quiet, kafka.WithBatchSize(20), kafka.WithBatchTimeout(300*time.Millisecond),
 		kafka.WithIdempotency(kafka.Idempotency{Store: newRedisStore(t), Key: byValue}))
@@ -311,20 +312,20 @@ func TestIdempotencyDuplicatesWithinOneBatch(t *testing.T) {
 }
 
 func TestIdempotencyBatchErrorAfterSkippedDuplicate(t *testing.T) {
-	k := newKafka(t, 1, "t")
+	k := kafkatest.New(t, 1, "t")
 	store := newRedisStore(t)
 	ctx := context.Background()
 	if _, err := idempotency.Do(ctx, store, byValue("", &kgo.Record{Value: []byte("0")}),
 		func(context.Context) (int, error) { return 0, nil }); err != nil {
 		t.Fatal(err)
 	}
-	publish(t, newProducer(t, k.cfg), k.T("t"), "k", "0", "k", "poison", "k", "2")
+	publish(t, newProducer(t, k.Config), k.Topic("t"), "k", "0", "k", "poison", "k", "2")
 
 	// The handler gets [poison 2] and reports BatchError{Processed: 0}: the
 	// failed record is "poison", not the duplicate "0" before it.
 	var h failAtPoison
 	mp, metrics := testkit.NewMetrics(t)
-	c, err := kafka.NewBatchConsumer(ctx, k.cfg, k.G("g"), []string{k.T("t")}, h.handle,
+	c, err := kafka.NewBatchConsumer(ctx, k.Config, k.Group("g"), []string{k.Topic("t")}, h.handle,
 		append(batchOpts(), kafka.WithSkipOnFailure(), kafka.WithMeterProvider(mp),
 			kafka.WithIdempotency(kafka.Idempotency{Store: store, Key: byValue}))...)
 	if err != nil {
@@ -338,13 +339,13 @@ func TestIdempotencyBatchErrorAfterSkippedDuplicate(t *testing.T) {
 }
 
 func TestIdempotencyFailedFirstCopyIsNotCountedAsDuplicate(t *testing.T) {
-	k := newKafka(t, 1, "t")
+	k := kafkatest.New(t, 1, "t")
 	// Two copies of the same failing event in one batch: the second copy is
 	// a duplicate only until the first fails, then it is handled itself.
-	publish(t, newProducer(t, k.cfg), k.T("t"), "k", "poison", "k", "poison", "k", "2")
+	publish(t, newProducer(t, k.Config), k.Topic("t"), "k", "poison", "k", "poison", "k", "2")
 	var h failAtPoison
 	mp, metrics := testkit.NewMetrics(t)
-	c, err := kafka.NewBatchConsumer(context.Background(), k.cfg, k.G("g"), []string{k.T("t")}, h.handle,
+	c, err := kafka.NewBatchConsumer(context.Background(), k.Config, k.Group("g"), []string{k.Topic("t")}, h.handle,
 		append(batchOpts(), kafka.WithSkipOnFailure(), kafka.WithMeterProvider(mp),
 			kafka.WithIdempotency(kafka.Idempotency{Store: newRedisStore(t), Key: byValue}))...)
 	if err != nil {
