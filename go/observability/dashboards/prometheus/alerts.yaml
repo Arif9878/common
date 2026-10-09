@@ -1,0 +1,160 @@
+# Prometheus alerting rules for metrics emitted by the common library's
+# packages (github.com/Arif9878/common/go). Load them as a rule file, or
+# with the Prometheus Operator as a PrometheusRule's spec.groups. Every
+# rule groups by job, the service; thresholds are starting points, tune
+# them per service with an override file or by copying the rule.
+groups:
+  - name: common-http
+    rules:
+      - alert: HTTPServerErrorRateHigh
+        expr: |
+          sum by (job) (rate(http_server_request_duration_seconds_count{http_response_status_code=~"5.."}[5m]))
+            / sum by (job) (rate(http_server_request_duration_seconds_count[5m])) > 0.05
+        for: 10m
+        labels: { severity: critical }
+        annotations:
+          summary: "{{ $labels.job }}: more than 5% of HTTP requests fail with 5xx"
+          description: "{{ $value | humanizePercentage }} of requests to {{ $labels.job }} answered 5xx over the last 10 minutes."
+      - alert: HTTPServerLatencyHigh
+        expr: |
+          histogram_quantile(0.99, sum by (job, le) (rate(http_server_request_duration_seconds_bucket[5m]))) > 1
+        for: 15m
+        labels: { severity: warning }
+        annotations:
+          summary: "{{ $labels.job }}: HTTP p99 latency above 1s"
+          description: "p99 latency is {{ $value | humanizeDuration }}."
+
+  - name: common-grpc
+    rules:
+      - alert: GRPCServerErrorRateHigh
+        expr: |
+          sum by (job) (rate(rpc_server_duration_milliseconds_count{rpc_response_status_code=~"Internal|Unknown|Unavailable|DeadlineExceeded|DataLoss"}[5m]))
+            / sum by (job) (rate(rpc_server_duration_milliseconds_count[5m])) > 0.05
+        for: 10m
+        labels: { severity: critical }
+        annotations:
+          summary: "{{ $labels.job }}: more than 5% of gRPC calls fail with server errors"
+          description: "{{ $value | humanizePercentage }} of calls ended Internal, Unknown, Unavailable, DeadlineExceeded or DataLoss."
+
+  - name: common-kafka
+    rules:
+      - alert: KafkaPartitionStopped
+        expr: max by (job, group) (kafka_consumer_partitions_stopped) > 0
+        for: 1m
+        labels: { severity: critical }
+        annotations:
+          summary: "{{ $labels.job }}: Kafka consumer {{ $labels.group }} stopped a partition"
+          description: "A record failed for good and its partition is paused: nothing after it is processed until the service restarts. Fix the record or the handler; see the error logs."
+      - alert: KafkaConsumerLagHigh
+        expr: sum by (job, topic) (kafka_consumer_lag) > 10000
+        for: 15m
+        labels: { severity: warning }
+        annotations:
+          summary: "{{ $labels.job }}: consumer lag on {{ $labels.topic }} above 10000 records"
+          description: "The consumer is {{ $value }} records behind. It is slower than the producers, stuck, or under-provisioned."
+      - alert: KafkaRecordsDeadLettered
+        expr: sum by (job, topic) (rate(kafka_consumer_records_total{outcome="dlq"}[5m])) > 0
+        for: 5m
+        labels: { severity: warning }
+        annotations:
+          summary: "{{ $labels.job }}: records from {{ $labels.topic }} go to the dead-letter topic"
+          description: "Records failed for good and were dead-lettered; they need to be inspected and replayed."
+      - alert: KafkaProduceErrors
+        expr: sum by (job, topic) (rate(kafka_producer_records_total{outcome!="ok"}[5m])) > 0
+        for: 10m
+        labels: { severity: warning }
+        annotations:
+          summary: "{{ $labels.job }}: publishing to {{ $labels.topic }} fails"
+          description: "Records are not acknowledged by the brokers."
+
+  - name: common-outbox
+    rules:
+      - alert: OutboxRelayFailing
+        expr: sum by (job, table) (rate(outbox_relay_failures_total[5m])) > 0
+        for: 10m
+        labels: { severity: critical }
+        annotations:
+          summary: "{{ $labels.job }}: the outbox relay for {{ $labels.table }} keeps failing"
+          description: "Events are kept in the outbox but not published; Kafka or PostgreSQL is unavailable to the relay."
+      - alert: OutboxNoActiveRelay
+        expr: sum by (job, table) (outbox_relay_active) < 1
+        for: 5m
+        labels: { severity: critical }
+        annotations:
+          summary: "{{ $labels.job }}: no replica relays the outbox {{ $labels.table }}"
+          description: "No replica holds the relay lock, so events are not published."
+      - alert: OutboxPublishLagHigh
+        expr: |
+          histogram_quantile(0.99, sum by (job, le) (rate(outbox_publish_lag_seconds_bucket[5m]))) > 60
+        for: 10m
+        labels: { severity: warning }
+        annotations:
+          summary: "{{ $labels.job }}: outbox events take over a minute to publish"
+          description: "p99 time from writing an event to its publication is {{ $value | humanizeDuration }}."
+
+  - name: common-postgres
+    rules:
+      - alert: PostgresPoolExhausted
+        expr: sum by (job, db_client_connection_pool_name) (db_client_connection_pending_requests) > 0
+        for: 5m
+        labels: { severity: warning }
+        annotations:
+          summary: "{{ $labels.job }}: requests wait for PostgreSQL connections ({{ $labels.db_client_connection_pool_name }})"
+          description: "The pool is exhausted: raise POSTGRES_MAX_CONNS (within the server's max_connections) or find slow queries."
+      - alert: PostgresPoolSaturated
+        expr: |
+          sum by (job, db_client_connection_pool_name) (db_client_connection_count{db_client_connection_state="used"})
+            / sum by (job, db_client_connection_pool_name) (db_client_connection_max) > 0.9
+        for: 15m
+        labels: { severity: warning }
+        annotations:
+          summary: "{{ $labels.job }}: PostgreSQL pool {{ $labels.db_client_connection_pool_name }} over 90% used"
+          description: "{{ $value | humanizePercentage }} of the pool's connections are in use."
+
+  - name: common-resilience
+    rules:
+      - alert: CircuitBreakerOpen
+        expr: max by (job, breaker) (circuitbreaker_state) == 2
+        for: 5m
+        labels: { severity: warning }
+        annotations:
+          summary: "{{ $labels.job }}: circuit breaker {{ $labels.breaker }} is open"
+          description: "Calls to the dependency fail fast because it kept failing."
+      - alert: RetriesExhausted
+        expr: sum by (job, operation) (rate(retry_attempts_total{outcome="exhausted"}[5m])) > 0.1
+        for: 10m
+        labels: { severity: warning }
+        annotations:
+          summary: "{{ $labels.job }}: retries of {{ $labels.operation }} run out"
+          description: "Operations fail after every retry attempt."
+      - alert: IdempotencyStoreErrors
+        expr: sum by (job, operation) (rate(idempotency_calls_total{outcome="store_error"}[5m])) > 0
+        for: 10m
+        labels: { severity: warning }
+        annotations:
+          summary: "{{ $labels.job }}: the idempotency store fails for {{ $labels.operation }}"
+          description: "Operations cannot be deduplicated: Redis or PostgreSQL is unavailable."
+
+  - name: common-secrets
+    rules:
+      - alert: VaultTokenExpiring
+        expr: min by (job) (vault_token_ttl_seconds) < 300
+        for: 5m
+        labels: { severity: critical }
+        annotations:
+          summary: "{{ $labels.job }}: Vault token expires in under 5 minutes"
+          description: "Token renewal and re-login are failing; secrets will become unreadable."
+      - alert: CredentialRotationFailing
+        expr: sum by (job, resource) (rate(rotation_attempts_total{outcome!="success"}[15m])) > 0
+        for: 15m
+        labels: { severity: warning }
+        annotations:
+          summary: "{{ $labels.job }}: rotating credentials for {{ $labels.resource }} fails"
+          description: "The current credential stays in use until it expires; see the rotation logs."
+      - alert: CredentialExpiring
+        expr: min by (job, resource) (rotation_credential_ttl_seconds) < 120
+        for: 2m
+        labels: { severity: critical }
+        annotations:
+          summary: "{{ $labels.job }}: the credential for {{ $labels.resource }} expires in under 2 minutes"
+          description: "Rotation has not replaced it; connections will fail when it expires."

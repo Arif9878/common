@@ -10,6 +10,7 @@ import (
 	"github.com/Arif9878/common/go/health"
 	"github.com/Arif9878/common/go/lifecycle/graceful"
 	"github.com/Arif9878/common/go/observability/metrics"
+	"github.com/Arif9878/common/go/observability/profiling"
 	"github.com/Arif9878/common/go/transport/grpc/grpcserver"
 	"github.com/Arif9878/common/go/transport/http/httpserver"
 )
@@ -62,7 +63,11 @@ func HTTPServer(opts ...HTTPOption) fx.Option {
 // AdminConfig configures the admin server. Environment variable names are
 // relative; for example ADMIN_ADDR with prefix ADMIN_.
 type AdminConfig struct {
+	// Addr is the admin listen address, for health probes and /metrics.
 	Addr string `env:"ADDR" envDefault:":9090"`
+	// Pprof serves Go's runtime profiles under /debug/pprof/, for go tool
+	// pprof and for continuous profiling with Grafana Alloy and Pyroscope.
+	Pprof bool `env:"PPROF"`
 }
 
 type adminIn struct {
@@ -72,8 +77,8 @@ type adminIn struct {
 	Metrics *metrics.Provider `optional:"true"`
 }
 
-// AdminServer serves /live, /ready and /startup from the health.Checker and,
-// with Observability, /metrics, on AdminConfig.Addr (":9090" by default),
+// AdminServer serves /live, /ready and /startup from the health.Checker,
+// /debug/pprof/ with AdminConfig.Pprof, and, with Observability, /metrics, on AdminConfig.Addr (":9090" by default),
 // separate from the public API. It stops in graceful.Telemetry, the last
 // phase, so readiness keeps answering 503 while the service drains and the
 // last metrics can still be scraped.
@@ -86,6 +91,9 @@ func AdminServer() fx.Option {
 			mux.Handle("GET /startup", in.Checks.StartupHandler())
 			if in.Metrics != nil {
 				mux.Handle("GET /metrics", in.Metrics.Handler())
+			}
+			if in.Config.Pprof {
+				profiling.Register(mux)
 			}
 			cfg := httpserver.Config{Addr: in.Config.Addr}
 			if cfg.Addr == "" {
