@@ -12,6 +12,7 @@ import (
 
 	"github.com/Arif9878/common/go/errors"
 	"github.com/Arif9878/common/go/messaging/kafka"
+	"github.com/Arif9878/common/go/messaging/kafka/kafkatest"
 	"github.com/Arif9878/common/go/testkit"
 )
 
@@ -45,11 +46,11 @@ func batchOpts() []kafka.Option {
 }
 
 func TestBatchErrorSkipsOnlyTheFailedRecord(t *testing.T) {
-	k := newKafka(t, 1, "t")
-	publish(t, newProducer(t, k.cfg), k.T("t"), "k", "0", "k", "poison", "k", "2", "k", "3")
+	k := kafkatest.New(t, 1, "t")
+	publish(t, newProducer(t, k.Config), k.Topic("t"), "k", "0", "k", "poison", "k", "2", "k", "3")
 	var h failAtPoison
 	mp, metrics := testkit.NewMetrics(t)
-	c, err := kafka.NewBatchConsumer(context.Background(), k.cfg, k.G("g"), []string{k.T("t")}, h.handle,
+	c, err := kafka.NewBatchConsumer(context.Background(), k.Config, k.Group("g"), []string{k.Topic("t")}, h.handle,
 		append(batchOpts(), kafka.WithSkipOnFailure(), kafka.WithMeterProvider(mp))...)
 	if err != nil {
 		t.Fatal(err)
@@ -65,12 +66,12 @@ func TestBatchErrorSkipsOnlyTheFailedRecord(t *testing.T) {
 }
 
 func TestBatchErrorAtFirstRecordGoesToDLQAlone(t *testing.T) {
-	k := newKafka(t, 1, "t", "t.dlq")
-	p := newProducer(t, k.cfg)
-	publish(t, p, k.T("t"), "k", "poison", "k", "1", "k", "2")
+	k := kafkatest.New(t, 1, "t", "t.dlq")
+	p := newProducer(t, k.Config)
+	publish(t, p, k.Topic("t"), "k", "poison", "k", "1", "k", "2")
 	var h failAtPoison
-	c, err := kafka.NewBatchConsumer(context.Background(), k.cfg, k.G("g"), []string{k.T("t")}, h.handle,
-		append(batchOpts(), kafka.WithDLQ(p, k.T("t.dlq")))...)
+	c, err := kafka.NewBatchConsumer(context.Background(), k.Config, k.Group("g"), []string{k.Topic("t")}, h.handle,
+		append(batchOpts(), kafka.WithDLQ(p, k.Topic("t.dlq")))...)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -79,16 +80,16 @@ func TestBatchErrorAtFirstRecordGoesToDLQAlone(t *testing.T) {
 	if got := h.snapshot(); !slices.Equal(got, []string{"1", "2"}) {
 		t.Errorf("handled %v, want [1 2]", got)
 	}
-	if dlq := consumeAll(t, k, k.T("t.dlq"), 1); string(dlq[0].Value) != "poison" {
+	if dlq := consumeAll(t, k, k.Topic("t.dlq"), 1); string(dlq[0].Value) != "poison" {
 		t.Errorf("dlq[0] = %q, want poison", dlq[0].Value)
 	}
 }
 
 func TestBatchErrorStopsPartitionAtTheFailedRecord(t *testing.T) {
-	k := newKafka(t, 1, "t")
-	publish(t, newProducer(t, k.cfg), k.T("t"), "k", "0", "k", "poison", "k", "2")
+	k := kafkatest.New(t, 1, "t")
+	publish(t, newProducer(t, k.Config), k.Topic("t"), "k", "0", "k", "poison", "k", "2")
 	var h failAtPoison
-	c, err := kafka.NewBatchConsumer(context.Background(), k.cfg, k.G("g"), []string{k.T("t")}, h.handle, batchOpts()...)
+	c, err := kafka.NewBatchConsumer(context.Background(), k.Config, k.Group("g"), []string{k.Topic("t")}, h.handle, batchOpts()...)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -101,18 +102,18 @@ func TestBatchErrorStopsPartitionAtTheFailedRecord(t *testing.T) {
 }
 
 func TestBatchPlainErrorFailsTheWholeBatch(t *testing.T) {
-	k := newKafka(t, 1, "t", "t.dlq")
-	p := newProducer(t, k.cfg)
-	publish(t, p, k.T("t"), "k", "0", "k", "1", "k", "2")
-	c, err := kafka.NewBatchConsumer(context.Background(), k.cfg, k.G("g"), []string{k.T("t")},
+	k := kafkatest.New(t, 1, "t", "t.dlq")
+	p := newProducer(t, k.Config)
+	publish(t, p, k.Topic("t"), "k", "0", "k", "1", "k", "2")
+	c, err := kafka.NewBatchConsumer(context.Background(), k.Config, k.Group("g"), []string{k.Topic("t")},
 		func(context.Context, []*kgo.Record) error { return errors.InvalidArgument.New("cannot tell which") },
-		append(batchOpts(), kafka.WithDLQ(p, k.T("t.dlq")))...)
+		append(batchOpts(), kafka.WithDLQ(p, k.Topic("t.dlq")))...)
 	if err != nil {
 		t.Fatal(err)
 	}
 	running(t, c)
 	// Without a BatchError the failed record is unknown: all three go.
-	if dlq := consumeAll(t, k, k.T("t.dlq"), 3); len(dlq) != 3 {
+	if dlq := consumeAll(t, k, k.Topic("t.dlq"), 3); len(dlq) != 3 {
 		t.Errorf("dlq has %d records, want 3", len(dlq))
 	}
 }

@@ -23,9 +23,15 @@ linters:
           files:
             - "!$test"
             - "!**/testkit/**" # testkit's own helpers may build on it
+            - "!**/redistest/**"
+            - "!**/kafkatest/**"
           deny:
             - pkg: github.com/Arif9878/common/go/testkit
               desc: production packages must not depend on testkit
+            - pkg: github.com/Arif9878/common/go/datastore/redis/redistest
+              desc: production packages must not depend on test helpers
+            - pkg: github.com/Arif9878/common/go/messaging/kafka/kafkatest
+              desc: production packages must not depend on test helpers
         all:
           deny:
             - pkg: github.com/satori/go.uuid
