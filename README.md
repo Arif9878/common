@@ -39,7 +39,7 @@ It requires **Go 1.26** or newer. Every package emits OpenTelemetry traces and m
 | | [`datastore/postgres/migrate`](go/datastore/postgres/migrate) | goose SQL migrations at startup, one replica at a time (advisory lock); `commonfx.PostgresMigrations` |
 | | [`datastore/redis/cache`](go/datastore/redis/cache) | Read-through cache: one load per key under concurrent misses, TTL jitter, cached not-found, Redis failures fall back to the loader |
 | | [`datastore/redis/ratelimit`](go/datastore/redis/ratelimit) | Rate limits per key (tenant, API key, IP) shared by every replica: GCRA in one Lua script on Redis's clock; HTTP middleware answering 429 with Retry-After; fails open (or closed) when Redis is down |
-| Messaging | [`messaging/kafka`](go/messaging/kafka) | franz-go producer and consumer: at-least-once, per-partition order, bounded concurrency, batches, DLQ, idempotency; [`kafkaproto`](go/messaging/kafka/kafkaproto) for Protobuf with a Schema Registry |
+| Messaging | [`messaging/kafka`](go/messaging/kafka) | franz-go producer and consumer: at-least-once, per-partition order, bounded concurrency, batches, delayed retry topics, DLQ, idempotency; [`kafkaproto`](go/messaging/kafka/kafkaproto) for Protobuf with a Schema Registry |
 | | [`messaging/outbox`](go/messaging/outbox) | Transactional outbox: publish Kafka records if and only if a PostgreSQL transaction commits |
 | Coordination | [`idempotency`](go/idempotency) | Run once per key; PostgreSQL and Redis stores |
 | | [`lock`](go/lock) | Leases with fencing tokens; PostgreSQL and Redis |

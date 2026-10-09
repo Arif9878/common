@@ -141,6 +141,11 @@ type Consumer struct {
 	tracer *kotel.Tracer
 	sem    chan struct{}
 
+	// Retry topics: step is the index of the step this consumer handles
+	// (-1 for the main consumer), retries the consumers of the steps.
+	step    int
+	retries []*Consumer
+
 	handlerCtx context.Context // cancelled when Close's deadline expires
 	abort      context.CancelFunc
 
@@ -191,8 +196,29 @@ func newConsumer(ctx context.Context, cfg Config, group string, topics []string,
 	if o.idem != nil && o.idem.Store == nil {
 		return nil, errors.InvalidArgument.New("kafka: WithIdempotency needs a store")
 	}
+	if err := validateRetryTopics(o, topics); err != nil {
+		return nil, err
+	}
+	c, err := buildConsumer(ctx, cfg, group, topics, batch, h, o, -1)
+	if err != nil {
+		return nil, err
+	}
+	for i, st := range o.retrySteps {
+		rc, err := buildConsumer(ctx, cfg, group+"."+st.Topic, []string{st.Topic}, batch, h, o, i)
+		if err != nil {
+			c.closeAll()
+			return nil, err
+		}
+		c.retries = append(c.retries, rc)
+	}
+	return c, nil
+}
+
+// buildConsumer creates the consumer of topics in group; step is the
+// retry step it consumes, or -1.
+func buildConsumer(ctx context.Context, cfg Config, group string, topics []string, batch bool, h BatchHandler, o options, step int) (*Consumer, error) {
 	c := &Consumer{
-		o: o, group: group, batch: batch, handle: h,
+		o: o, group: group, batch: batch, handle: h, step: step,
 		sem:     make(chan struct{}, o.concurrency),
 		workers: map[topicPartition]*worker{},
 		lag:     map[topicPartition]int64{},
@@ -202,6 +228,9 @@ func newConsumer(ctx context.Context, cfg Config, group string, topics []string,
 	}
 	if o.idem != nil {
 		c.handle = c.idempotent(h)
+	}
+	if step >= 0 {
+		c.handle = asOriginal(c.handle) // outside idempotent: keys use the original coordinates
 	}
 	c.handlerCtx, c.abort = context.WithCancel(context.Background())
 	c.initMetrics()
@@ -239,7 +268,7 @@ func newConsumer(ctx context.Context, cfg Config, group string, topics []string,
 func (c *Consumer) initMetrics() {
 	meter := c.o.meterProv.Meter("github.com/Arif9878/common/go/messaging/kafka")
 	c.records, _ = meter.Int64Counter("kafka.consumer.records",
-		metric.WithDescription("Records handled, by topic and outcome: success, dlq, skipped, failed (partition stopped)."))
+		metric.WithDescription("Records handled, by topic and outcome: success, retry (sent to a retry topic), dlq, skipped, failed (partition stopped)."))
 	c.duration, _ = meter.Float64Histogram("kafka.consumer.process.duration", metric.WithUnit("s"),
 		metric.WithDescription("Handler time per record or batch, including retries."))
 	c.size, _ = meter.Int64Histogram("kafka.consumer.batch.size", metric.WithUnit("{record}"),
@@ -281,6 +310,13 @@ func (c *Consumer) Run(ctx context.Context) error {
 	c.mu.Unlock()
 	defer close(c.runDone)
 	defer stop()
+	for _, rc := range c.retries {
+		go func() {
+			if err := rc.Run(pollCtx); err != nil {
+				c.o.logger.Error("kafka retry consumer stopped", "group", rc.group, logging.Err(err))
+			}
+		}()
+	}
 
 	for {
 		fetches := c.cl.PollRecords(pollCtx, c.o.maxPollRecords)
@@ -416,6 +452,9 @@ func (c *Consumer) runWorker(w *worker) {
 		}
 		if w.failed.Load() {
 			continue // partition stopped: discard until it is revoked or resumed
+		}
+		if c.step >= 0 && !c.waitDue(w, batch) {
+			return // stopped while waiting: not started, will be redelivered
 		}
 		c.process(w, batch)
 	}
@@ -582,6 +621,21 @@ func (c *Consumer) fail(ctx context.Context, w *worker, rs []*kgo.Record, err er
 	attrs := []any{logging.KeyTopic, first.Topic, logging.KeyPartition, first.Partition,
 		"first_offset", first.Offset, "last_offset", last.Offset, logging.Err(err)}
 
+	if next := c.step + 1; next < len(c.o.retrySteps) && errors.IsRetryable(err) {
+		st := c.o.retrySteps[next]
+		rctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
+		defer cancel()
+		rerr := c.o.retryProducer.Publish(rctx, retryRecords(rs, next, st, err, time.Now())...)
+		if rerr == nil {
+			c.mark(w, last)
+			c.count(ctx, first.Topic, "retry", len(rs))
+			c.o.logger.WarnContext(ctx, "kafka records sent to retry topic",
+				append(attrs, "retry_topic", st.Topic, "retry_delay", st.Delay)...)
+			return
+		}
+		attrs = append(attrs, "retry_error", rerr.Error())
+	}
+
 	if c.o.dlq != nil {
 		dctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
 		defer cancel()
@@ -615,10 +669,11 @@ func (c *Consumer) dlqRecords(rs []*kgo.Record, err error) []*kgo.Record {
 	out := make([]*kgo.Record, len(rs))
 	for i, r := range rs {
 		headers := append([]kgo.RecordHeader{}, r.Headers...)
+		topic, partition, offset := original(r)
 		headers = append(headers,
-			kgo.RecordHeader{Key: "dlq.original.topic", Value: []byte(r.Topic)},
-			kgo.RecordHeader{Key: "dlq.original.partition", Value: []byte(strconv.Itoa(int(r.Partition)))},
-			kgo.RecordHeader{Key: "dlq.original.offset", Value: []byte(strconv.FormatInt(r.Offset, 10))},
+			kgo.RecordHeader{Key: "dlq.original.topic", Value: []byte(topic)},
+			kgo.RecordHeader{Key: "dlq.original.partition", Value: []byte(strconv.Itoa(int(partition)))},
+			kgo.RecordHeader{Key: "dlq.original.offset", Value: []byte(strconv.FormatInt(offset, 10))},
 			kgo.RecordHeader{Key: "dlq.error.kind", Value: []byte(errors.KindOf(err).String())},
 			kgo.RecordHeader{Key: "dlq.error", Value: []byte(msg)},
 		)
@@ -668,8 +723,22 @@ func (c *Consumer) Close(ctx context.Context) error {
 		if c.reg != nil {
 			_ = c.reg.Unregister()
 		}
+		for _, rc := range c.retries {
+			c.closeErr = errors.Join(c.closeErr, rc.Close(ctx))
+		}
 	})
 	return c.closeErr
+}
+
+// closeAll closes a consumer that never ran, and its retry consumers.
+func (c *Consumer) closeAll() {
+	c.cl.Close()
+	if c.reg != nil {
+		_ = c.reg.Unregister()
+	}
+	for _, rc := range c.retries {
+		rc.closeAll()
+	}
 }
 
 func deadlineOr(ctx context.Context, fallback time.Time) time.Time {

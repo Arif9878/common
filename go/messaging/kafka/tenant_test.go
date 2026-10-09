@@ -11,20 +11,21 @@ import (
 	"go.opentelemetry.io/otel/propagation"
 
 	"github.com/Arif9878/common/go/messaging/kafka"
+	"github.com/Arif9878/common/go/messaging/kafka/kafkatest"
 	"github.com/Arif9878/common/go/tenant"
 	"github.com/Arif9878/common/go/testkit"
 )
 
 func TestTenantFromProducer(t *testing.T) {
 	prop := kafka.WithPropagators(propagation.NewCompositeTextMapPropagator(propagation.TraceContext{}, propagation.Baggage{}))
-	k := newKafka(t, 1, "events")
-	p := newProducer(t, k.cfg, prop)
+	k := kafkatest.New(t, 1, "events")
+	p := newProducer(t, k.Config, prop)
 
 	ctx := tenant.NewContext(context.Background(), "acme")
-	if err := p.Publish(ctx, &kgo.Record{Topic: k.T("events"), Value: []byte("with tenant")}); err != nil {
+	if err := p.Publish(ctx, &kgo.Record{Topic: k.Topic("events"), Value: []byte("with tenant")}); err != nil {
 		t.Fatal(err)
 	}
-	if err := p.Publish(context.Background(), &kgo.Record{Topic: k.T("events"), Value: []byte("without")}); err != nil {
+	if err := p.Publish(context.Background(), &kgo.Record{Topic: k.Topic("events"), Value: []byte("without")}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -39,7 +40,7 @@ func TestTenantFromProducer(t *testing.T) {
 			var mu sync.Mutex
 			tenants := map[string]string{}
 			bags := map[string]string{}
-			c, err := kafka.NewConsumer(context.Background(), k.cfg, k.G("g-"+name), []string{k.T("events")}, func(ctx context.Context, r *kgo.Record) error {
+			c, err := kafka.NewConsumer(context.Background(), k.Config, k.Group("g-"+name), []string{k.Topic("events")}, func(ctx context.Context, r *kgo.Record) error {
 				mu.Lock()
 				defer mu.Unlock()
 				tenants[string(r.Value)], _ = tenant.FromContext(ctx)
