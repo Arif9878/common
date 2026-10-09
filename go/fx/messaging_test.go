@@ -11,19 +11,24 @@ import (
 	"github.com/alicebob/miniredis/v2"
 	"github.com/twmb/franz-go/pkg/kfake"
 	"github.com/twmb/franz-go/pkg/kgo"
+	"github.com/twmb/franz-go/pkg/sr"
 	"go.uber.org/fx"
 	"go.uber.org/fx/fxtest"
 
 	"github.com/Arif9878/common/go/config"
+	"github.com/Arif9878/common/go/datastore/postgres"
 	"github.com/Arif9878/common/go/datastore/redis"
 	"github.com/Arif9878/common/go/errors"
 	commonfx "github.com/Arif9878/common/go/fx"
 	"github.com/Arif9878/common/go/idempotency"
 	"github.com/Arif9878/common/go/messaging/kafka"
+	"github.com/Arif9878/common/go/messaging/kafka/kafkaproto"
+	"github.com/Arif9878/common/go/messaging/outbox"
 	"github.com/Arif9878/common/go/observability/logging"
 	"github.com/Arif9878/common/go/observability/metrics"
 	"github.com/Arif9878/common/go/observability/tracing"
 	"github.com/Arif9878/common/go/testkit"
+	"github.com/Arif9878/common/go/testkit/pgtest"
 )
 
 type messagingConfig struct {
@@ -112,4 +117,67 @@ func TestKafkaIdempotencyRejectsAStore(t *testing.T) {
 	if errors.KindOf(err) != errors.InvalidArgument {
 		t.Errorf("err = %v, want invalid_argument", err)
 	}
+}
+
+func TestOutboxRelay(t *testing.T) {
+	pg := pgtest.Config(t)
+	cluster, err := kfake.NewCluster(kfake.NumBrokers(1), kfake.SeedTopics(1, "orders"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cluster.Close()
+	table := "fx_outbox_" + strings.ToLower(strings.ReplaceAll(t.Name(), "/", "_"))
+	setup := pgtest.DB(t)
+	ctx := context.Background()
+	if _, err := setup.Exec(ctx, strings.Replace(outbox.Schema, "kafka_outbox", table, 1)); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _, _ = setup.Exec(context.Background(), "DROP TABLE "+table) })
+
+	var db *postgres.DB
+	var box *outbox.Outbox
+	var rc *sr.Client
+	logger, _ := testkit.NewLogger(t)
+	app := fxtest.New(t,
+		fx.Supply(pg, kafka.Config{Brokers: cluster.ListenAddrs()}, kafkaproto.Config{URLs: []string{"http://localhost:1"}}, logger),
+		commonfx.Lifecycle(),
+		commonfx.Postgres(),
+		commonfx.KafkaProducer(),
+		commonfx.Outbox(outbox.WithTable(table)),
+		commonfx.OutboxRelay(outbox.WithPollInterval(100*time.Millisecond)),
+		commonfx.SchemaRegistry(),
+		fx.Populate(&db, &box, &rc),
+		commonfx.Ready(),
+	)
+	app.RequireStart()
+	if rc == nil {
+		t.Error("SchemaRegistry did not provide a client")
+	}
+
+	tx, err := db.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := box.Write(ctx, tx, &kgo.Record{Topic: "orders", Value: []byte("o-1")}); err != nil {
+		t.Fatal(err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	cl, err := kgo.NewClient(kgo.SeedBrokers(cluster.ListenAddrs()...), kgo.ConsumeTopics("orders"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cl.Close()
+	fctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	var got []string
+	for len(got) == 0 && fctx.Err() == nil {
+		cl.PollFetches(fctx).EachRecord(func(r *kgo.Record) { got = append(got, string(r.Value)) })
+	}
+	if !slices.Equal(got, []string{"o-1"}) {
+		t.Fatalf("consumed %v, want [o-1]", got)
+	}
+	app.RequireStop()
 }

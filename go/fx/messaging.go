@@ -1,6 +1,9 @@
 package commonfx
 
 import (
+	"context"
+
+	"github.com/twmb/franz-go/pkg/sr"
 	"go.uber.org/fx"
 
 	"github.com/Arif9878/common/go/datastore/postgres"
@@ -9,7 +12,10 @@ import (
 	"github.com/Arif9878/common/go/idempotency"
 	"github.com/Arif9878/common/go/idempotency/pgstore"
 	"github.com/Arif9878/common/go/idempotency/redisstore"
+	"github.com/Arif9878/common/go/lifecycle/graceful"
 	"github.com/Arif9878/common/go/messaging/kafka"
+	"github.com/Arif9878/common/go/messaging/kafka/kafkaproto"
+	"github.com/Arif9878/common/go/messaging/outbox"
 )
 
 // KafkaBatchConsumer is like [KafkaConsumer] for a batch handler: handler
@@ -69,4 +75,54 @@ func KafkaIdempotency(cfg kafka.Idempotency) fx.Option {
 		},
 		fx.ResultTags(KafkaOptions),
 	))
+}
+
+// SchemaRegistry provides the Schema Registry client (*sr.Client) from the
+// graph's kafkaproto.Config, for kafkaproto.New:
+//
+//	commonfx.SchemaRegistry(),
+//	fx.Provide(func(ctx context.Context, rc *sr.Client) (*kafkaproto.Serde[*orderspb.OrderCreated], error) {
+//		return kafkaproto.New[*orderspb.OrderCreated](ctx, rc, kafkaproto.ValueSubject("orders.created"))
+//	}),
+//
+// The client makes no request until it is used.
+func SchemaRegistry() fx.Option {
+	return fx.Provide(func(cfg kafkaproto.Config) (*sr.Client, error) { return kafkaproto.NewRegistry(cfg) })
+}
+
+// Outbox provides *outbox.Outbox, for writing records in the business
+// transaction with Outbox.Write. Add [OutboxRelay] to publish them.
+func Outbox(opts ...outbox.Option) fx.Option {
+	return fx.Provide(func() *outbox.Outbox { return outbox.New(opts...) })
+}
+
+// OutboxRelay publishes the records of the graph's *outbox.Outbox ([Outbox])
+// with the graph's *postgres.DB ([Postgres]) and *kafka.Producer
+// ([KafkaProducer]). The relay starts with the app and stops in
+// graceful.StopIntake, before the producer is flushed and closed in
+// graceful.Drain.
+//
+//	commonfx.Postgres(),
+//	commonfx.KafkaProducer(),
+//	commonfx.Outbox(),
+//	commonfx.OutboxRelay(),
+func OutboxRelay(opts ...outbox.RelayOption) fx.Option {
+	return fx.Module("commonfx.outbox.relay",
+		fx.Provide(func(box *outbox.Outbox, db *postgres.DB, p *kafka.Producer, t *telemetry) *outbox.Relay {
+			base := []outbox.RelayOption{outbox.WithLogger(t.logger)}
+			if t.mp != nil {
+				base = append(base, outbox.WithMeterProvider(t.mp))
+			}
+			return box.NewRelay(db, p, append(base, opts...)...)
+		}),
+		fx.Invoke(func(lc fx.Lifecycle, g *graceful.Manager, relay *outbox.Relay) {
+			lc.Append(fx.Hook{OnStart: func(context.Context) error {
+				if err := g.Register(graceful.StopIntake, "outbox relay", relay.Stop); err != nil {
+					return err
+				}
+				g.Go("outbox relay", func() error { return relay.Run(context.Background()) })
+				return nil
+			}})
+		}),
+	)
 }
