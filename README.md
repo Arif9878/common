@@ -29,6 +29,7 @@ It requires **Go 1.26** or newer. Every package emits OpenTelemetry traces and m
 | | [`transport/http/echoadapter`](go/transport/http/echoadapter) | The same middleware and errors for Echo (the organization's standard framework) |
 | gRPC | [`transport/grpc`](go/transport/grpc) | `grpcserver`, `grpcclient`, `grpcstatus` (error kinds ↔ status codes) |
 | Auth | [`auth/jwtauth`](go/auth/jwtauth) | Verify OAuth/OIDC JWTs (Keycloak, Auth0, Okta, Entra ID, …) with JWKS discovery and key rotation; scopes; HTTP, Echo and gRPC |
+| | [`auth/oauth2client`](go/auth/oauth2client) | OAuth 2.0 client credentials for service-to-service calls: cached tokens refreshed before expiry, for HTTP and gRPC clients |
 | Secrets | [`secret`](go/secret), [`secret/rotation`](go/secret/rotation), [`secret/vault`](go/secret/vault) | Provider-neutral secrets, zero-downtime credential rotation, Vault |
 | Datastores | [`datastore/postgres`](go/datastore/postgres), [`datastore/redis`](go/datastore/redis) | pgx and go-redis clients with telemetry, health and credential rotation |
 | Messaging | [`messaging/kafka`](go/messaging/kafka) | franz-go producer and consumer: at-least-once, per-partition order, bounded concurrency, batches, DLQ, idempotency; [`kafkaproto`](go/messaging/kafka/kafkaproto) for Protobuf with a Schema Registry |
@@ -124,6 +125,14 @@ e.Use(echo.WrapMiddleware(httpserver.Auth(jwtauth.HTTP(v))))                    
 e.POST("/orders", create, echo.WrapMiddleware(jwtauth.RequireScope("orders:write")))      // 403 without the scope
 grpcserver.New(grpcserver.WithAuth(grpcserver.Bearer(v.Authenticate)))                     // gRPC
 claims, _ := jwtauth.FromContext(ctx)                                                      // claims.Subject, claims.HasScope
+```
+
+To call another service with a token, use `auth/oauth2client` (client credentials). It caches the token and refreshes it 30 seconds before it expires:
+
+```go
+src := oauth2client.New(cfg.PaymentsAuth) // TOKEN_URL, CLIENT_ID, CLIENT_SECRET, SCOPES, AUDIENCE
+client := httpclient.New(cfg.Payments, httpclient.WithBaseTransport(src.Transport(httpclient.NewTransport(cfg.Payments))))
+conn, _ := grpcclient.New(target, grpcclient.WithDialOptions(grpc.WithPerRPCCredentials(src)))
 ```
 
 With fx, use `commonfx.JWTAuth()`, which provides the verifier, and `commonfx.GRPCJWTAuth()` to protect the gRPC server.

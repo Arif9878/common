@@ -16,6 +16,7 @@ Secrets (`config.Secret`) never appear in logs or in printed configuration. Pack
 | Package | Struct |
 |---|---|
 | `auth/jwtauth` | [`jwtauth.Config`](#jwtauthconfig) |
+| `auth/oauth2client` | [`oauth2client.Config`](#oauth2clientconfig) |
 | `datastore/postgres` | [`postgres.Config`](#postgresconfig) |
 | `datastore/redis` | [`redis.Config`](#redisconfig) |
 | `fx` | [`commonfx.AdminConfig`](#commonfxadminconfig) |
@@ -45,6 +46,20 @@ Secrets (`config.Secret`) never appear in logs or in printed configuration. Pack
 | `LEEWAY` | `time.Duration` | `30s` | Leeway tolerates this much clock skew in exp, nbf and iat. |
 | `JWKS_REFRESH_INTERVAL` | `time.Duration` | `15m` | RefreshInterval is how often the keys are refreshed in the background. |
 | `JWKS_MIN_REFRESH_INTERVAL` | `time.Duration` | `30s` | MinRefreshInterval is the least time between refreshes triggered by unknown key IDs. |
+
+## oauth2client.Config
+
+`github.com/Arif9878/common/go/auth/oauth2client`: Config configures a client.
+
+| Variable | Type | Default | Description |
+|---|---|---|---|
+| `TOKEN_URL` | `string` | **required** | TokenURL is the identity provider's token endpoint, such as https://keycloak.example.com/realms/main/protocol/openid-connect/token. |
+| `CLIENT_ID` | `string` | **required** | ClientID and ClientSecret identify this service to the provider. |
+| `CLIENT_SECRET` | `config.Secret` (secret) | **required** | ClientID and ClientSecret identify this service to the provider. |
+| `SCOPES` | `[]string (separated by ",")` |  | Scopes requested for the token. |
+| `AUDIENCE` | `string` |  | Audience, if set, is sent as the "audience" parameter, which Auth0, Okta and others use to choose the API the token is for. |
+| `EARLY_EXPIRY` | `time.Duration` | `30s` | EarlyExpiry replaces a token this long before it expires, so a request never leaves with a token about to expire. |
+| `TIMEOUT` | `time.Duration` | `10s` | Timeout bounds each token request. |
 
 ## postgres.Config
 
