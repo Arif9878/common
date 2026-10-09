@@ -1,0 +1,54 @@
+# Runs the service with everything it needs, and Grafana with Tempo, Loki
+# and Prometheus (grafana/otel-lgtm) to see its logs, traces and metrics:
+#   docker compose -f examples/orders-service/docker-compose.yml up --build
+#   curl -s -XPOST localhost:8080/orders -d '{"customer_id":"c-1","amount":1500}' -H 'Content-Type: application/json'
+#   open http://localhost:3000   (Grafana, admin/admin)
+services:
+  orders:
+    build:
+      context: ../..
+      dockerfile: examples/orders-service/Dockerfile
+      args: { VERSION: "0.1.0" }
+    ports: ["8080:8080", "9090:9090"]
+    environment:
+      OTEL_SERVICE_NAME: orders
+      OTEL_RESOURCE_ATTRIBUTES: service.version=0.1.0,deployment.environment.name=local
+      POSTGRES_HOST: postgres
+      POSTGRES_DATABASE: orders
+      POSTGRES_USER: orders
+      POSTGRES_PASSWORD: orders
+      POSTGRES_SSLMODE: disable
+      REDIS_ADDRS: redis:6379
+      KAFKA_BROKERS: redpanda:9092
+      OTLP_ENDPOINT: lgtm:4317
+      OTLP_INSECURE: "true"
+      TRACING_EXPORTER: otlp
+      METRICS_EXPORTER: prometheus,otlp
+      METRICS_EXPORT_INTERVAL: 10s
+      LOGS_EXPORTER: otlp
+      LOG_OUTPUT: both
+    depends_on:
+      postgres: { condition: service_healthy }
+      redis: { condition: service_healthy }
+      redpanda: { condition: service_healthy }
+    restart: on-failure
+
+  postgres:
+    image: postgres:18
+    environment: { POSTGRES_DB: orders, POSTGRES_USER: orders, POSTGRES_PASSWORD: orders }
+    healthcheck: { test: ["CMD", "pg_isready", "-U", "orders"], interval: 2s, retries: 30 }
+
+  redis:
+    image: redis:8
+    healthcheck: { test: ["CMD", "redis-cli", "ping"], interval: 2s, retries: 30 }
+
+  redpanda:
+    image: redpandadata/redpanda:v26.2.4
+    command: >-
+      redpanda start --mode dev-container --smp 1
+      --kafka-addr internal://0.0.0.0:9092 --advertise-kafka-addr internal://redpanda:9092
+    healthcheck: { test: ["CMD", "rpk", "cluster", "health", "--exit-when-healthy"], interval: 3s, retries: 40 }
+
+  lgtm:
+    image: grafana/otel-lgtm:latest
+    ports: ["3000:3000"]

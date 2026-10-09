@@ -69,15 +69,20 @@ import (
 // shown. Environment variable names are relative.
 type Config struct {
 	// Timeout bounds a whole call, including retries and reading the body.
-	Timeout             time.Duration `env:"TIMEOUT" envDefault:"30s"`
-	DialTimeout         time.Duration `env:"DIAL_TIMEOUT" envDefault:"5s"`
-	KeepAlive           time.Duration `env:"KEEP_ALIVE" envDefault:"30s"`
+	Timeout time.Duration `env:"TIMEOUT" envDefault:"30s"`
+	// DialTimeout bounds opening one TCP connection.
+	DialTimeout time.Duration `env:"DIAL_TIMEOUT" envDefault:"5s"`
+	// KeepAlive is the TCP keep-alive interval.
+	KeepAlive time.Duration `env:"KEEP_ALIVE" envDefault:"30s"`
+	// TLSHandshakeTimeout bounds the TLS handshake.
 	TLSHandshakeTimeout time.Duration `env:"TLS_HANDSHAKE_TIMEOUT" envDefault:"5s"`
 	// ResponseHeaderTimeout bounds waiting for response headers per
 	// attempt. Zero means no per-attempt limit beyond Timeout.
 	ResponseHeaderTimeout time.Duration `env:"RESPONSE_HEADER_TIMEOUT"`
-	IdleConnTimeout       time.Duration `env:"IDLE_CONN_TIMEOUT" envDefault:"90s"`
-	MaxIdleConns          int           `env:"MAX_IDLE_CONNS" envDefault:"100"`
+	// IdleConnTimeout closes idle connections after this long.
+	IdleConnTimeout time.Duration `env:"IDLE_CONN_TIMEOUT" envDefault:"90s"`
+	// MaxIdleConns bounds idle connections across all hosts.
+	MaxIdleConns int `env:"MAX_IDLE_CONNS" envDefault:"100"`
 	// MaxIdleConnsPerHost defaults to 20, not net/http's 2, which causes
 	// connection churn under load to a single host.
 	MaxIdleConnsPerHost int `env:"MAX_IDLE_CONNS_PER_HOST" envDefault:"20"`

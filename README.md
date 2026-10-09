@@ -38,6 +38,8 @@ It requires **Go 1.26** or newer. Every package emits OpenTelemetry traces and m
 | Testing | [`testkit`](go/testkit) | Capture logs, metrics and spans in tests; `Eventually`; PostgreSQL test databases |
 | Uber fx | [`fx`](go/fx) (separate module) | Provides all of the above to an fx application, with telemetry and shutdown wired in |
 
+**Start here:** [`examples/orders-service`](examples/orders-service) is a complete service built the intended way: fx, Echo, PostgreSQL with the transactional outbox, an idempotent Kafka consumer, OTLP observability, a Dockerfile, docker-compose with Grafana, and a Kubernetes manifest. [`go/ENVIRONMENT.md`](go/ENVIRONMENT.md) lists every configuration variable.
+
 Each package's Go documentation describes its guarantees, failure behavior and limits: `go doc github.com/Arif9878/common/go/<package>`. The design notes and conventions are in [`docs/go-platform-proposal.md`](docs/go-platform-proposal.md).
 
 ## A service in a few lines
@@ -251,6 +253,8 @@ cd go
 make check                         # tidy, vet, lint, test (race), govulncheck in every module: what CI runs
 make test MODULES=messaging/kafka  # one module
 make test COVER=1 && make cover-summary   # coverage per module, counting every package a test exercises
+make envdoc                        # regenerate ENVIRONMENT.md after changing a configuration struct
+make examples                      # build, lint and test examples/ against this checkout
 ```
 
 Integration tests run against real infrastructure when it is configured, and are skipped otherwise:

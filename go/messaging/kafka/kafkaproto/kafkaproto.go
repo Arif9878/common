@@ -60,8 +60,12 @@ import (
 // are relative; the service chooses the prefix, for example
 // SCHEMA_REGISTRY_.
 type Config struct {
-	URLs     []string      `env:"URLS,required" envSeparator:"," validate:"min=1"`
-	Username string        `env:"USERNAME"`
+	// URLs are the Schema Registry base URLs, such as http://redpanda:8081.
+	URLs []string `env:"URLS,required" envSeparator:"," validate:"min=1"`
+	// Username and Password authenticate with HTTP basic auth (for Confluent
+	// Cloud, the API key and secret).
+	Username string `env:"USERNAME"`
+	// Password is the basic-auth password.
 	Password config.Secret `env:"PASSWORD"`
 	// Timeout bounds each registry request.
 	Timeout time.Duration `env:"TIMEOUT" envDefault:"10s"`

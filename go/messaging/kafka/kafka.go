@@ -112,16 +112,24 @@ import (
 // Environment variable names are relative; the service chooses the prefix,
 // for example KAFKA_.
 type Config struct {
-	Brokers  []string `env:"BROKERS,required" envSeparator:"," validate:"min=1"`
-	ClientID string   `env:"CLIENT_ID"`
-	TLS      bool     `env:"TLS"`
+	// Brokers are the seed brokers, host:port; the client discovers the rest
+	// of the cluster from them.
+	Brokers []string `env:"BROKERS,required" envSeparator:"," validate:"min=1"`
+	// ClientID identifies the client in broker logs and quotas; empty uses
+	// franz-go's default.
+	ClientID string `env:"CLIENT_ID"`
+	// TLS connects to the brokers with TLS, verifying their certificates.
+	TLS bool `env:"TLS"`
 	// TLSServerName overrides the name checked in broker certificates.
 	TLSServerName string `env:"TLS_SERVER_NAME"`
 	// SASLMechanism is "", "plain", "scram-sha-256" or "scram-sha-512".
-	SASLMechanism string        `env:"SASL_MECHANISM" validate:"omitempty,oneof=plain scram-sha-256 scram-sha-512"`
-	SASLUsername  string        `env:"SASL_USERNAME"`
-	SASLPassword  config.Secret `env:"SASL_PASSWORD"`
-	DialTimeout   time.Duration `env:"DIAL_TIMEOUT" envDefault:"10s"`
+	SASLMechanism string `env:"SASL_MECHANISM" validate:"omitempty,oneof=plain scram-sha-256 scram-sha-512"`
+	// SASLUsername and SASLPassword authenticate with SASLMechanism.
+	SASLUsername string `env:"SASL_USERNAME"`
+	// SASLPassword is the SASL password.
+	SASLPassword config.Secret `env:"SASL_PASSWORD"`
+	// DialTimeout bounds opening one broker connection.
+	DialTimeout time.Duration `env:"DIAL_TIMEOUT" envDefault:"10s"`
 }
 
 func (c Config) clientOpts() ([]kgo.Opt, error) {

@@ -71,22 +71,40 @@ import (
 type Config struct {
 	// Addrs lists host:port addresses: one for a single node, several for
 	// a cluster or for Sentinel nodes (with MasterName).
-	Addrs      []string      `env:"ADDRS" envSeparator:"," envDefault:"localhost:6379"`
-	MasterName string        `env:"MASTER_NAME"`
-	Username   string        `env:"USERNAME"`
-	Password   config.Secret `env:"PASSWORD"`
-	DB         int           `env:"DB"`
-	TLS        bool          `env:"TLS"`
+	Addrs []string `env:"ADDRS" envSeparator:"," envDefault:"localhost:6379"`
+	// MasterName is the Sentinel master name; with it, Addrs lists Sentinel
+	// nodes.
+	MasterName string `env:"MASTER_NAME"`
+	// Username and Password authenticate with Redis ACLs (or Password alone
+	// with requirepass). With credential rotation they come from the secret
+	// instead.
+	Username string `env:"USERNAME"`
+	// Password is the ACL user's or requirepass password.
+	Password config.Secret `env:"PASSWORD"`
+	// DB is the logical database on a single node (not supported by clusters).
+	DB int `env:"DB"`
+	// TLS connects with TLS, verifying the server certificate.
+	TLS bool `env:"TLS"`
 	// TLSServerName overrides the name checked in the server certificate.
 	TLSServerName string `env:"TLS_SERVER_NAME"`
 
-	DialTimeout     time.Duration `env:"DIAL_TIMEOUT" envDefault:"5s"`
-	ReadTimeout     time.Duration `env:"READ_TIMEOUT" envDefault:"3s"`
-	WriteTimeout    time.Duration `env:"WRITE_TIMEOUT" envDefault:"3s"`
-	PoolTimeout     time.Duration `env:"POOL_TIMEOUT" envDefault:"4s"`
-	PoolSize        int           `env:"POOL_SIZE"` // 0: go-redis default, 10 per CPU
-	MinIdleConns    int           `env:"MIN_IDLE_CONNS"`
+	// DialTimeout bounds opening one connection.
+	DialTimeout time.Duration `env:"DIAL_TIMEOUT" envDefault:"5s"`
+	// ReadTimeout and WriteTimeout bound reading a reply and writing a
+	// command.
+	ReadTimeout time.Duration `env:"READ_TIMEOUT" envDefault:"3s"`
+	// WriteTimeout bounds writing a command.
+	WriteTimeout time.Duration `env:"WRITE_TIMEOUT" envDefault:"3s"`
+	// PoolTimeout bounds waiting for a free connection when the pool is
+	// exhausted.
+	PoolTimeout time.Duration `env:"POOL_TIMEOUT" envDefault:"4s"`
+	PoolSize    int           `env:"POOL_SIZE"` // 0: go-redis default, 10 per CPU
+	// MinIdleConns keeps this many connections open while idle.
+	MinIdleConns int `env:"MIN_IDLE_CONNS"`
+	// ConnMaxLifetime closes connections older than this, so they are recycled
+	// regularly.
 	ConnMaxLifetime time.Duration `env:"CONN_MAX_LIFETIME" envDefault:"30m"`
+	// ConnMaxIdleTime closes connections idle for this long.
 	ConnMaxIdleTime time.Duration `env:"CONN_MAX_IDLE_TIME" envDefault:"5m"`
 	// MaxRetries retries commands after network errors. 0 disables
 	// retries; see the package documentation before enabling them.

@@ -78,12 +78,15 @@ import (
 // environment variables (VAULT_ADDR, VAULT_NAMESPACE, VAULT_CACERT, ...).
 // Variable names are relative; the service chooses the prefix.
 type Config struct {
-	Address   string `env:"ADDR"`
+	// Address is Vault's URL, such as https://vault.internal:8200.
+	Address string `env:"ADDR"`
+	// Namespace is the Vault Enterprise namespace, if any.
 	Namespace string `env:"NAMESPACE"`
 	// Token authenticates when no auth method is given.
 	Token config.Secret `env:"TOKEN"`
 	// CACert is a PEM file with the CA that signed Vault's certificate.
-	CACert        string `env:"CACERT"`
+	CACert string `env:"CACERT"`
+	// TLSServerName overrides the name checked in Vault's certificate.
 	TLSServerName string `env:"TLS_SERVER_NAME"`
 	// Timeout bounds each HTTP request to Vault.
 	Timeout time.Duration `env:"TIMEOUT" envDefault:"10s"`
