@@ -20,7 +20,8 @@
 //   - trace_id and span_id from the OpenTelemetry span in the context
 //   - request_id from [requestid.FromContext]
 //   - attributes attached to the context with [ContextWithAttrs], such as
-//     topic, partition and offset set by a Kafka consumer
+//     topic, partition and offset set by a Kafka consumer, tenant_id set by
+//     the tenant package and user_id set by jwtauth
 //
 // These are always top-level fields, even when the logger has groups.
 //

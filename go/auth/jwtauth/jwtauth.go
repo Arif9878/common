@@ -56,6 +56,7 @@ import (
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/metric"
+	"go.opentelemetry.io/otel/trace"
 
 	"github.com/Arif9878/common/go/errors"
 	"github.com/Arif9878/common/go/observability/logging"
@@ -94,7 +95,13 @@ type options struct {
 	logger    *slog.Logger
 	meterProv metric.MeterProvider
 	now       func() time.Time
+	noSubject bool
 }
+
+// WithoutSubjectInTelemetry keeps the token's subject out of logs and
+// spans, for subjects that are personal data (an e-mail address, say)
+// rather than opaque IDs.
+func WithoutSubjectInTelemetry() Option { return func(o *options) { o.noSubject = true } }
 
 // WithHTTPClient fetches the OpenID configuration and keys with c. The
 // default is an httpclient with a 10s timeout and retries.
@@ -348,11 +355,18 @@ func publicKeyFor(m jwt.SigningMethod, pub crypto.PublicKey) (crypto.PublicKey, 
 }
 
 // Authenticate verifies token and returns ctx carrying its claims, for
-// grpcserver.Bearer and other transports.
+// grpcserver.Bearer and other transports. The subject is added to the
+// context's logs as user_id and to the current span as user.id, unless
+// WithoutSubjectInTelemetry is set.
 func (v *Verifier) Authenticate(ctx context.Context, token string) (context.Context, error) {
 	c, err := v.Verify(ctx, token)
 	if err != nil {
 		return nil, err
 	}
-	return NewContext(ctx, c), nil
+	ctx = NewContext(ctx, c)
+	if !v.o.noSubject && c.Subject != "" {
+		trace.SpanFromContext(ctx).SetAttributes(attribute.String("user.id", c.Subject))
+		ctx = logging.ContextWithAttrs(ctx, slog.String(logging.KeyUserID, c.Subject))
+	}
+	return ctx, nil
 }

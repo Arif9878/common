@@ -24,6 +24,21 @@ func HTTP(v *Verifier) httpserver.Authenticator {
 	}
 }
 
+// ClaimValue returns a function reading the string claim name of the
+// request's verified token, such as "tenant_id", for tenant.Middleware.
+// Put that middleware after httpserver.Auth.
+func ClaimValue(name string) func(*http.Request) (string, bool) {
+	return func(r *http.Request) (string, bool) {
+		c, ok := FromContext(r.Context())
+		if !ok {
+			return "", false
+		}
+		v, ok := c.Get(name)
+		s, isString := v.(string)
+		return s, ok && isString
+	}
+}
+
 // BearerToken returns the token of an "Authorization: Bearer <token>"
 // header value. The scheme is case-insensitive.
 func BearerToken(authorization string) (string, bool) {

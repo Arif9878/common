@@ -17,6 +17,8 @@ const (
 	KeyTraceID   = "trace_id"
 	KeySpanID    = "span_id"
 	KeyRequestID = "request_id"
+	KeyTenantID  = "tenant_id"
+	KeyUserID    = "user_id"
 
 	KeyTopic     = "topic"
 	KeyPartition = "partition"
