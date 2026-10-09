@@ -130,7 +130,7 @@ func retryRecords(rs []*kgo.Record, step int, s RetryTopic, err error, now time.
 			kgo.RecordHeader{Key: HeaderRetryOriginalPartition, Value: []byte(strconv.Itoa(int(partition)))},
 			kgo.RecordHeader{Key: HeaderRetryOriginalOffset, Value: []byte(strconv.FormatInt(offset, 10))},
 			kgo.RecordHeader{Key: HeaderRetryAttempt, Value: []byte(strconv.Itoa(step + 1))},
-			kgo.RecordHeader{Key: HeaderRetryNotBefore, Value: []byte(strconv.FormatInt(now.Add(s.Delay).UnixMilli(), 10))},
+			kgo.RecordHeader{Key: HeaderRetryNotBefore, Value: []byte(strconv.FormatInt(ceilMilli(now.Add(s.Delay)), 10))},
 			kgo.RecordHeader{Key: HeaderRetryErrorKind, Value: []byte(kind)},
 			kgo.RecordHeader{Key: HeaderRetryError, Value: []byte(msg)},
 		)
@@ -171,6 +171,16 @@ func (c *Consumer) waitDue(w *worker, batch []*kgo.Record) bool {
 	case <-w.stop:
 		return false
 	}
+}
+
+// ceilMilli returns t in Unix milliseconds, rounded up so a record is
+// never retried before its delay.
+func ceilMilli(t time.Time) int64 {
+	ms := t.UnixMilli()
+	if t.UnixNano()%int64(time.Millisecond) != 0 {
+		ms++
+	}
+	return ms
 }
 
 func truncate(s string, n int) string {
