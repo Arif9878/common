@@ -175,7 +175,11 @@ func checkAPIAfterTag(root string, deferred []module, version string) []string {
 			warnings = append(warnings, m.Dir+": "+err.Error())
 			continue
 		}
-		out, _ := combined(filepath.Join(root, m.Dir), "go", "run", "golang.org/x/exp/cmd/gorelease@"+goreleaseVersion, "-base="+base)
+		// Fetch this repository's modules straight from the remote: asked
+		// seconds after the push, the module proxy and checksum database
+		// would answer "not found" and cache that answer for everyone.
+		out, _ := combinedEnv(filepath.Join(root, m.Dir), []string{"GOPRIVATE=" + repoPath(m)},
+			"go", "run", "golang.org/x/exp/cmd/gorelease@"+goreleaseVersion, "-base="+base)
 		verdict, ok := afterTagVerdict(out, base, version)
 		fmt.Printf("  %-28s %s → %s: %s\n", m.Dir, base, version, verdict)
 		if !ok {
@@ -267,6 +271,11 @@ func needsUnreleasedAPI(out, prefix string) bool {
 	}
 	return found
 }
+
+// repoPath returns the repository's import path prefix, such as
+// github.com/Arif9878/common for the module github.com/Arif9878/common/go/fx
+// in go/fx.
+func repoPath(m module) string { return strings.TrimSuffix(m.Path, "/"+m.Dir) }
 
 // repoPrefix returns the core module's path, the prefix of every module
 // path of the repository.

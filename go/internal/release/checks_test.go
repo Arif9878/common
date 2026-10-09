@@ -126,3 +126,10 @@ func TestAfterTagVerdict(t *testing.T) {
 		}
 	}
 }
+
+func TestRepoPath(t *testing.T) {
+	m := module{Path: "github.com/Arif9878/common/go/messaging/kafka", Dir: "go/messaging/kafka"}
+	if got := repoPath(m); got != "github.com/Arif9878/common" {
+		t.Errorf("repoPath = %q", got)
+	}
+}

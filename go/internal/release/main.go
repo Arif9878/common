@@ -459,8 +459,16 @@ func output(dir, name string, args ...string) (string, error) {
 // combined runs a command in dir and returns its standard output and
 // error together, also when it fails.
 func combined(dir, name string, args ...string) (string, error) {
+	return combinedEnv(dir, nil, name, args...)
+}
+
+// combinedEnv is combined with env added to the environment.
+func combinedEnv(dir string, env []string, name string, args ...string) (string, error) {
 	cmd := exec.CommandContext(context.Background(), name, args...) //nolint:gosec // release tooling runs fixed commands
 	cmd.Dir = dir
+	if env != nil {
+		cmd.Env = append(os.Environ(), env...)
+	}
 	out, err := cmd.CombinedOutput()
 	return string(out), err
 }
