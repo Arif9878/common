@@ -1,6 +1,6 @@
 # Migrating from the legacy packages
 
-The packages below come from `go/v0.1.0`. They are deprecated and will be **removed in v1.0**. They keep working until then, but get no new features. Their replacements are in this module, so migrating needs no new dependency.
+The packages below came from `go/v0.1.0`. They were deprecated in v0.2.0 and are **removed** in the release that follows `go/v0.6.x`. To keep using them, stay on `go/v0.6.x` while you migrate. Their replacements are in this module, so migrating needs no new dependency.
 
 | Legacy package | Replacement |
 |---|---|
@@ -14,7 +14,7 @@ The packages below come from `go/v0.1.0`. They are deprecated and will be **remo
 
 Echo is the organization's standard web framework, so `echoadapter` is permanent; only the old Echo setup code goes away.
 
-To stay on the old code, pin `go/v0.1.0`. A deprecation does not break a build, but `staticcheck` reports each use (SA1019).
+Removing them also removed their dependencies from the core module: `logrus`, `satori/go.uuid`, `lib/pq` and `go-oauth2`.
 
 ## `logger` → `observability/logging`
 
