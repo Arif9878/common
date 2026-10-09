@@ -166,6 +166,10 @@ func message(fe validator.FieldError) string {
 // validates it. Malformed JSON, a value of the wrong type, an unknown field
 // or an invalid field are InvalidArgument errors naming the field where
 // possible. Bound the body size with httpserver.MaxBytes.
+//
+// For a value of the wrong type inside an array, the field names the
+// element ("items[0].quantity") from Go 1.27 on; Go 1.26's encoding/json
+// reports only "items.quantity".
 func Decode(r *http.Request, dst any) error {
 	dec := json.NewDecoder(r.Body)
 	dec.DisallowUnknownFields()
