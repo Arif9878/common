@@ -24,6 +24,7 @@ It requires **Go 1.26** or newer. Every package emits OpenTelemetry traces and m
 | | [`health`](go/health) | Liveness, readiness and startup probes |
 | Resilience | [`resilience/retry`](go/resilience/retry), [`circuitbreaker`](go/resilience/circuitbreaker), [`ratelimit`](go/resilience/ratelimit) | Retries for transient errors, failing fast, rate limits |
 | Concurrency | [`concurrency/workerpool`](go/concurrency/workerpool), [`batch`](go/concurrency/batch) | Bounded worker pools; batching by size and time |
+| | [`concurrency/schedule`](go/concurrency/schedule) | Cron and interval jobs, each run on one replica (with a `lock.Locker`); timeouts, no overlap, metrics; `commonfx.Scheduler` |
 | HTTP | [`transport/http/httpserver`](go/transport/http/httpserver) | Standard middleware, problem+json errors, graceful serving |
 | | [`transport/http/httpclient`](go/transport/http/httpclient) | Pooling, safe retries, circuit breaker |
 | | [`transport/http/echoadapter`](go/transport/http/echoadapter) | The same middleware and errors for Echo (the organization's standard framework) |

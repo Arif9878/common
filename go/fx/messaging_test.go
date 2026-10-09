@@ -5,6 +5,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -15,6 +16,7 @@ import (
 	"go.uber.org/fx"
 	"go.uber.org/fx/fxtest"
 
+	"github.com/Arif9878/common/go/concurrency/schedule"
 	"github.com/Arif9878/common/go/config"
 	"github.com/Arif9878/common/go/datastore/postgres"
 	"github.com/Arif9878/common/go/datastore/redis"
@@ -180,4 +182,31 @@ func TestOutboxRelay(t *testing.T) {
 		t.Fatalf("consumed %v, want [o-1]", got)
 	}
 	app.RequireStop()
+}
+
+func TestSchedulerWithRedisLocker(t *testing.T) {
+	m := miniredis.RunT(t)
+	var s *schedule.Scheduler
+	var runs atomic.Int32
+	app := fxtest.New(t,
+		fx.Supply(redis.Config{Addrs: []string{m.Addr()}}),
+		commonfx.Lifecycle(),
+		commonfx.Redis(),
+		commonfx.RedisLocker(),
+		commonfx.Scheduler(),
+		fx.Invoke(func(sc *schedule.Scheduler) error {
+			return sc.Every("tick", time.Second, func(context.Context) error { runs.Add(1); return nil })
+		}),
+		fx.Populate(&s),
+		commonfx.Ready(),
+	)
+	app.RequireStart()
+	testkit.Eventually(t, 5*time.Second, "a scheduled run", func() bool { return runs.Load() > 0 })
+	app.RequireStop()
+	if err := s.Every("late", time.Minute, func(context.Context) error { return nil }); errors.KindOf(err) != errors.InvalidArgument {
+		t.Errorf("adding a job after start: %v", err)
+	}
+	if keys := m.Keys(); len(keys) == 0 {
+		t.Error("no lease was taken in Redis")
+	}
 }
