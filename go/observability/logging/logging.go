@@ -1,6 +1,7 @@
 package logging
 
 import (
+	"cmp"
 	"errors"
 	"fmt"
 	"io"
@@ -10,6 +11,8 @@ import (
 
 	"go.opentelemetry.io/contrib/bridges/otelslog"
 	otellog "go.opentelemetry.io/otel/log"
+
+	"github.com/Arif9878/common/go/observability/internal/resenv"
 )
 
 // Config configures a logger. The zero value logs JSON at info level to
@@ -37,8 +40,13 @@ type Config struct {
 	TraceIDKey string `env:"TRACE_ID_KEY" envDefault:"trace_id"`
 	SpanIDKey  string `env:"SPAN_ID_KEY" envDefault:"span_id"`
 
-	// Service, Environment and Version are added to every record.
-	// Empty values are omitted.
+	// Service, Environment and Version are added to every record. Empty
+	// fields are taken from the standard OpenTelemetry variables, as the
+	// tracing, metrics and logs packages do: OTEL_SERVICE_NAME, and
+	// service.name, deployment.environment.name and service.version in
+	// OTEL_RESOURCE_ATTRIBUTES. So one pair of variables, set in the
+	// container or Pod spec, names the service in every signal. Values
+	// still empty are omitted.
 	Service     string `env:"SERVICE"`
 	Environment string `env:"ENVIRONMENT"`
 	Version     string `env:"VERSION"`
@@ -176,11 +184,12 @@ func New(cfg Config, opts ...Option) (*slog.Logger, error) {
 		base = fanout(outputs)
 	}
 
+	id := resenv.Lookup()
 	var static []slog.Attr
 	for _, a := range []slog.Attr{
-		slog.String(KeyService, cfg.Service),
-		slog.String(KeyEnvironment, cfg.Environment),
-		slog.String(KeyVersion, cfg.Version),
+		slog.String(KeyService, cmp.Or(cfg.Service, id.Service)),
+		slog.String(KeyEnvironment, cmp.Or(cfg.Environment, id.Environment)),
+		slog.String(KeyVersion, cmp.Or(cfg.Version, id.Version)),
 	} {
 		if a.Value.String() != "" {
 			static = append(static, a)
