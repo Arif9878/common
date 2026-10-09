@@ -17,6 +17,7 @@ GET /orders/:id ◄── PostgreSQL: notifications ◄───┘
 |---|---|
 | `main.go` | The fx application: configuration from the environment, observability, lifecycle, admin and Echo servers, PostgreSQL, Redis, Kafka, the outbox relay and Kafka idempotency. |
 | `internal/orders/orders.go` | Writing the order and its event in one transaction with `outbox.Write`; errors classified with `errors` and `postgres.Classify`. |
+| `internal/orders/migrations/` | goose migrations, applied at startup by `commonfx.PostgresMigrations`, one replica at a time. |
 | `internal/orders/http.go` | Echo handlers that return errors; `EchoServer` turns them into problem+json responses. |
 | `internal/orders/notifier.go` | A Kafka handler with `kafka.Typed` that is safe to run twice. |
 | `main_test.go` | The whole flow end to end, with in-process Kafka and Redis and a real PostgreSQL. |
@@ -44,6 +45,6 @@ CI builds and tests it with every change to the library.
 
 1. Replace the module path, and drop the `replace` block in `go.mod`.
 2. Require the released versions: `go get github.com/Arif9878/common/go@latest`, then the same version of `go/fx`, `go/datastore/postgres`, `go/datastore/redis`, `go/messaging/kafka` and `go/messaging/outbox`.
-3. Run migrations with your migration tool instead of `orders.Migrate`.
+3. Add your migrations under `migrations/`; long-running ones belong in a separate job.
 
 Every environment variable is listed in [ENVIRONMENT.md](../../go/ENVIRONMENT.md).

@@ -33,7 +33,7 @@ func TestOrderFlow(t *testing.T) {
 	pg := pgtest.Config(t)
 	db := pgtest.DB(t)
 	t.Cleanup(func() {
-		_, _ = db.Exec(context.Background(), `DROP TABLE IF EXISTS notifications, orders, kafka_outbox`)
+		_, _ = db.Exec(context.Background(), `DROP TABLE IF EXISTS notifications, orders, kafka_outbox, goose_db_version`)
 	})
 	cluster, err := kfake.NewCluster(kfake.NumBrokers(1), kfake.SeedTopics(1, orders.Topic))
 	if err != nil {

@@ -32,6 +32,7 @@ It requires **Go 1.26** or newer. Every package emits OpenTelemetry traces and m
 | | [`auth/oauth2client`](go/auth/oauth2client) | OAuth 2.0 client credentials for service-to-service calls: cached tokens refreshed before expiry, for HTTP and gRPC clients |
 | Secrets | [`secret`](go/secret), [`secret/rotation`](go/secret/rotation), [`secret/vault`](go/secret/vault) | Provider-neutral secrets, zero-downtime credential rotation, Vault |
 | Datastores | [`datastore/postgres`](go/datastore/postgres), [`datastore/redis`](go/datastore/redis) | pgx and go-redis clients with telemetry, health and credential rotation |
+| | [`datastore/postgres/migrate`](go/datastore/postgres/migrate) | goose SQL migrations at startup, one replica at a time (advisory lock); `commonfx.PostgresMigrations` |
 | Messaging | [`messaging/kafka`](go/messaging/kafka) | franz-go producer and consumer: at-least-once, per-partition order, bounded concurrency, batches, DLQ, idempotency; [`kafkaproto`](go/messaging/kafka/kafkaproto) for Protobuf with a Schema Registry |
 | | [`messaging/outbox`](go/messaging/outbox) | Transactional outbox: publish Kafka records if and only if a PostgreSQL transaction commits |
 | Coordination | [`idempotency`](go/idempotency) | Run once per key; PostgreSQL and Redis stores |

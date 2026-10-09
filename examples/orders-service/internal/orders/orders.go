@@ -5,7 +5,8 @@ package orders
 
 import (
 	"context"
-	_ "embed"
+	"embed"
+	"io/fs"
 	"strconv"
 	"time"
 
@@ -21,14 +22,19 @@ import (
 // Topic receives the "order created" events.
 const Topic = "orders.created"
 
-//go:embed schema.sql
-var schema string
+//go:embed migrations/*.sql
+var migrations embed.FS
+
+// Migrations are the service's goose migrations, applied at startup by
+// commonfx.PostgresMigrations (one replica at a time).
+var Migrations, _ = fs.Sub(migrations, "migrations")
 
 // Module wires the domain into an fx application that has the commonfx
 // Postgres, Outbox, EchoServer and Kafka modules.
 var Module = fx.Options(
+	commonfx.PostgresMigrations(Migrations),
 	fx.Provide(NewService),
-	fx.Invoke(Migrate, RegisterRoutes),
+	fx.Invoke(RegisterRoutes),
 	commonfx.KafkaConsumer("orders-notifier", []string{Topic}, NewNotifier),
 )
 
@@ -46,18 +52,6 @@ type Created struct {
 	OrderID    int64  `json:"order_id"`
 	CustomerID string `json:"customer_id"`
 	Amount     int64  `json:"amount"`
-}
-
-// Migrate creates the tables. A real service runs migrations with a
-// migration tool before it starts; this keeps the example self-contained.
-func Migrate(db *postgres.DB) error {
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-	if _, err := db.Exec(ctx, outbox.Schema); err != nil {
-		return postgres.Classify(err)
-	}
-	_, err := db.Exec(ctx, schema)
-	return postgres.Classify(err)
 }
 
 // Service creates and reads orders.
