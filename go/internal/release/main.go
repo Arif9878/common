@@ -159,6 +159,7 @@ func run(o opts) error {
 	for _, m := range examples {
 		fmt.Printf("  %-20s %s  (not released; requires %s at %s)\n", m.Dir, m.Path, strings.Join(m.Requires, ", "), version)
 	}
+	var deferred []module // modules whose API check needs the release tagged
 	checks := []struct {
 		name string
 		skip bool
@@ -167,7 +168,7 @@ func run(o opts) error {
 		{"working tree, branch and tags", false, func() error { return preflight(root, mods, version) }},
 		{"main matches " + remote, false, func() error { return checkRemote(root, remote) }},
 		{"CI on HEAD", o.skipCI, func() error { return checkCI(root) }},
-		{"API compatibility (gorelease)", o.skipAPI, func() error { return checkAPI(root, mods, version) }},
+		{"API compatibility (gorelease)", o.skipAPI, func() (err error) { deferred, err = checkAPI(root, mods, version); return err }},
 		{"version fits the commits since " + cmp.Or(prev, "the start"), false, func() error { return checkBump(prev, version, chs) }},
 	}
 	fmt.Println("\nChangelog:")
@@ -245,6 +246,12 @@ func run(o opts) error {
 	}
 	fmt.Println("Pushed main and", strings.Join(tags, ", "))
 
+	var warnings []string
+	if len(deferred) > 0 {
+		fmt.Println("\nAPI compatibility of the modules checked after tagging:")
+		warnings = checkAPIAfterTag(root, deferred, version)
+	}
+
 	if ghRelease {
 		_, body, _ := strings.Cut(notes, "\n") // the title is the release name
 		coreTag := core.Tag(version)
@@ -260,6 +267,9 @@ func run(o opts) error {
 			}
 		}
 		fmt.Println("Created GitHub releases.")
+	}
+	if len(warnings) > 0 {
+		return fmt.Errorf("released, but the API check after tagging found problems; fix them in a new release:\n%s", strings.Join(warnings, "\n"))
 	}
 	return nil
 }

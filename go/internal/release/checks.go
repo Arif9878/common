@@ -126,12 +126,12 @@ func versionParts(v string) [3]int {
 // incompatible change in a patch release). gorelease's own diagnostics
 // about the replace directives this repository uses for development are
 // ignored; only its verdict on the version counts.
-func checkAPI(root string, mods []module, version string) error {
+func checkAPI(root string, mods []module, version string) (deferred []module, err error) {
 	var problems []string
 	for _, m := range mods {
 		base, err := previousVersion(root, m, version)
 		if err != nil {
-			return err
+			return nil, err
 		}
 		if base == "" {
 			fmt.Printf("  %-28s new module, no API check\n", m.Dir)
@@ -145,7 +145,8 @@ func checkAPI(root string, mods []module, version string) error {
 			// the released versions of the modules it requires, which lack
 			// the API this release adds. Those modules are checked
 			// themselves; m can only be checked once they are tagged.
-			verdict, ok = "not checked: uses API this release adds to "+strings.Join(m.Requires, ", "), true
+			verdict, ok = "checked after tagging: uses API this release adds to "+strings.Join(m.Requires, ", "), true
+			deferred = append(deferred, m)
 			if c := section(out, "## incompatible changes"); c != "" {
 				verdict, ok = "incompatible changes in the packages gorelease could load", !patchOnly(base, version)
 			}
@@ -156,9 +157,51 @@ func checkAPI(root string, mods []module, version string) error {
 		}
 	}
 	if len(problems) > 0 {
-		return errors.New("API check failed (pass -skip-api-check to override):\n" + strings.Join(problems, "\n"))
+		return nil, errors.New("API check failed (pass -skip-api-check to override):\n" + strings.Join(problems, "\n"))
 	}
-	return nil
+	return deferred, nil
+}
+
+// checkAPIAfterTag runs gorelease on the modules checkAPI deferred, once
+// the release is tagged and pushed so the API they use can be downloaded.
+// The release can no longer be stopped, so it reports problems instead of
+// failing: an incompatible change the version doesn't allow needs a new
+// release that restores the API, or one with a bigger version.
+func checkAPIAfterTag(root string, deferred []module, version string) []string {
+	var warnings []string
+	for _, m := range deferred {
+		base, err := previousVersion(root, m, version)
+		if err != nil {
+			warnings = append(warnings, m.Dir+": "+err.Error())
+			continue
+		}
+		out, _ := combined(filepath.Join(root, m.Dir), "go", "run", "golang.org/x/exp/cmd/gorelease@"+goreleaseVersion, "-base="+base)
+		verdict, ok := afterTagVerdict(out, base, version)
+		fmt.Printf("  %-28s %s → %s: %s\n", m.Dir, base, version, verdict)
+		if !ok {
+			warnings = append(warnings, m.Dir+": "+verdict+"\n"+section(out, "## incompatible changes"))
+		}
+	}
+	return warnings
+}
+
+// afterTagVerdict judges gorelease's report on a module that is already
+// tagged. Without -version gorelease only lists the changes, so the
+// policy of apiVerdict is applied to those lists.
+func afterTagVerdict(out, base, version string) (string, bool) {
+	if errs := section(out, "## errors in release version"); errs != "" || !strings.Contains(out, "# summary") {
+		return "could not be checked:\n" + out, false
+	}
+	incompatible := section(out, "## incompatible changes") != ""
+	switch {
+	case incompatible && patchOnly(base, version):
+		return "incompatible changes in a patch release", false
+	case incompatible:
+		return "incompatible changes (allowed by this minor or major version)", true
+	case section(out, "## compatible changes") != "":
+		return "compatible", true
+	}
+	return "no API changes", true
 }
 
 // goreleaseVersion pins gorelease, like the other tools in the Makefile.
