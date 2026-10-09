@@ -38,6 +38,8 @@ require (
 require (
 	github.com/Arif9878/common/go/idempotency/pgstore v0.6.1 // indirect
 	github.com/Arif9878/common/go/idempotency/redisstore v0.6.1 // indirect
+	github.com/Arif9878/common/go/lock/pglock v0.6.1 // indirect
+	github.com/Arif9878/common/go/lock/redislock v0.6.1 // indirect
 	github.com/Arif9878/common/go/secret/vault v0.6.1 // indirect
 	github.com/Arif9878/common/go/transport/grpc v0.6.1 // indirect
 	github.com/beorn7/perks v1.0.1 // indirect
@@ -90,6 +92,7 @@ require (
 	github.com/redis/go-redis/extra/rediscmd/v9 v9.23.0 // indirect
 	github.com/redis/go-redis/extra/redisotel/v9 v9.23.0 // indirect
 	github.com/redis/go-redis/v9 v9.23.0 // indirect
+	github.com/robfig/cron/v3 v3.0.1 // indirect
 	github.com/ryanuber/go-glob v1.0.0 // indirect
 	github.com/sethvargo/go-retry v0.4.0 // indirect
 	github.com/sony/gobreaker/v2 v2.4.0 // indirect
