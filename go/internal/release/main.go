@@ -152,6 +152,13 @@ func run(o opts) error {
 		}
 		fmt.Println()
 	}
+	examples, err := findExamples(root, mods)
+	if err != nil {
+		return err
+	}
+	for _, m := range examples {
+		fmt.Printf("  %-20s %s  (not released; requires %s at %s)\n", m.Dir, m.Path, strings.Join(m.Requires, ", "), version)
+	}
 	checks := []struct {
 		name string
 		skip bool
@@ -197,7 +204,7 @@ func run(o opts) error {
 	undo := func(err error) error {
 		return fmt.Errorf("%w\nundo local changes with: git checkout -- . && git tag -d <tags created>", err)
 	}
-	for _, m := range mods {
+	for _, m := range append(slices.Clone(mods), examples...) {
 		if len(m.Requires) == 0 {
 			continue
 		}
@@ -214,10 +221,10 @@ func run(o opts) error {
 	if err := prependChangelog(filepath.Join(root, "go", "CHANGELOG.md"), notes); err != nil {
 		return undo(err)
 	}
-	if _, err := output(root, "git", "add", "-A", "go"); err != nil {
+	if _, err := output(root, "git", "add", "-A", "go", "examples"); err != nil {
 		return undo(err)
 	}
-	msg := "chore(release): " + version + "\n\nRequire " + version + " between modules and add it to go/CHANGELOG.md."
+	msg := "chore(release): " + version + "\n\nRequire " + version + " between modules and in the examples, and add it to go/CHANGELOG.md."
 	if len(o.trailers) > 0 {
 		msg += "\n\n" + strings.Join(o.trailers, "\n")
 	}
@@ -285,8 +292,49 @@ func indent(s string) string {
 // findModules returns the modules under go/ in root, skipping vendor and
 // testdata directories.
 func findModules(root string) ([]module, error) {
+	mods, err := readModules(root, "go")
+	if err != nil {
+		return nil, err
+	}
+	paths := map[string]bool{}
+	for _, m := range mods {
+		paths[m.Path] = true
+	}
+	return onlyRequiring(mods, paths), nil
+}
+
+// findExamples returns the modules under examples/ in root that require
+// modules of the repository (paths), with Requires filtered to those. They
+// are not released, but their requirements follow each release so that
+// go mod tidy stays clean.
+func findExamples(root string, mods []module) ([]module, error) {
+	if _, err := os.Stat(filepath.Join(root, "examples")); os.IsNotExist(err) {
+		return nil, nil
+	}
+	ex, err := readModules(root, "examples")
+	if err != nil {
+		return nil, err
+	}
+	paths := map[string]bool{}
+	for _, m := range mods {
+		paths[m.Path] = true
+	}
+	return slices.DeleteFunc(onlyRequiring(ex, paths), func(m module) bool { return len(m.Requires) == 0 }), nil
+}
+
+// onlyRequiring filters each module's Requires to the paths given.
+func onlyRequiring(mods []module, paths map[string]bool) []module {
+	for i := range mods {
+		mods[i].Requires = slices.DeleteFunc(mods[i].Requires, func(p string) bool { return !paths[p] })
+	}
+	return mods
+}
+
+// readModules returns every module under dir in root, skipping vendor
+// and testdata directories, with all of its requirements.
+func readModules(root, dir string) ([]module, error) {
 	var mods []module
-	err := filepath.WalkDir(filepath.Join(root, "go"), func(path string, d fs.DirEntry, err error) error {
+	err := filepath.WalkDir(filepath.Join(root, dir), func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
@@ -313,22 +361,12 @@ func findModules(root string) ([]module, error) {
 		}
 		m := module{Path: mf.Module.Path, Dir: filepath.ToSlash(rel)}
 		for _, r := range mf.Require {
-			m.Requires = append(m.Requires, r.Path) // filtered to repository modules below
+			m.Requires = append(m.Requires, r.Path)
 		}
 		mods = append(mods, m)
 		return nil
 	})
-	if err != nil {
-		return nil, err
-	}
-	paths := map[string]bool{}
-	for _, m := range mods {
-		paths[m.Path] = true
-	}
-	for i := range mods {
-		mods[i].Requires = slices.DeleteFunc(mods[i].Requires, func(p string) bool { return !paths[p] })
-	}
-	return mods, nil
+	return mods, err
 }
 
 // order sorts modules so each comes after the modules it requires, and
