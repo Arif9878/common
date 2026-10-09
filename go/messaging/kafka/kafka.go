@@ -33,6 +33,9 @@
 // errors.IsRetryable). When retries are exhausted or the error is not
 // retryable, the record is:
 //
+//   - published to the next retry topic, if WithRetryTopics is set and the
+//     error is retryable, and handled again after that topic's delay; its
+//     offset is committed, so the partition moves on meanwhile;
 //   - published to the dead-letter topic, if WithDLQ is set, with headers
 //     describing the failure; then its offset is committed;
 //   - otherwise skipped with an error log, if WithSkipOnFailure is set;
@@ -189,6 +192,8 @@ type options struct {
 	commitInterval  time.Duration
 	resetToLatest   bool
 	idem            *Idempotency
+	retryProducer   *Producer
+	retrySteps      []RetryTopic
 }
 
 func newOptions(opts []Option) options {
