@@ -14,11 +14,14 @@ import (
 func RegisterRoutes(e *echo.Echo, s *Service) {
 	e.POST("/orders", func(c echo.Context) error {
 		var req struct {
-			CustomerID string `json:"customer_id"`
-			Amount     int64  `json:"amount"`
+			CustomerID string `json:"customer_id" validate:"required"`
+			Amount     int64  `json:"amount" validate:"gt=0"`
 		}
 		if err := c.Bind(&req); err != nil {
 			return errors.WithPublicMessage(errors.InvalidArgument.Wrap(err, "decode order"), "invalid JSON body")
+		}
+		if err := c.Validate(&req); err != nil { // 400 listing the invalid fields
+			return err
 		}
 		o, err := s.Create(c.Request().Context(), req.CustomerID, req.Amount)
 		if err != nil {

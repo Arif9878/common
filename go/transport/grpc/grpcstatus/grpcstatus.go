@@ -9,6 +9,7 @@
 package grpcstatus
 
 import (
+	"google.golang.org/genproto/googleapis/rpc/errdetails"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
@@ -102,7 +103,19 @@ func ToStatus(err error) error {
 	if s, ok := passThrough(err); ok {
 		return s.Err()
 	}
-	return status.Error(CodeFor(errors.KindOf(err)), errors.PublicMessage(err))
+	s := status.New(CodeFor(errors.KindOf(err)), errors.PublicMessage(err))
+	if fields := errors.Fields(err); len(fields) > 0 {
+		br := &errdetails.BadRequest{}
+		for _, f := range fields {
+			br.FieldViolations = append(br.FieldViolations, &errdetails.BadRequest_FieldViolation{
+				Field: f.Field, Description: f.Message, Reason: f.Rule,
+			})
+		}
+		if withDetails, derr := s.WithDetails(br); derr == nil {
+			s = withDetails
+		}
+	}
+	return s.Err()
 }
 
 // passThrough returns err's status if it should be sent unchanged: err
@@ -139,7 +152,24 @@ func FromStatus(err error) error {
 		}
 		return errors.Unavailable.Wrap(err, "")
 	}
-	return &statusError{status: s, kinded: KindFor(s.Code()).Wrap(err, "")}
+	kinded := KindFor(s.Code()).Wrap(err, "")
+	if fields := fieldsOf(s); len(fields) > 0 {
+		kinded = errors.WithFields(kinded, fields...)
+	}
+	return &statusError{status: s, kinded: kinded}
+}
+
+// fieldsOf returns the field violations of a status's BadRequest details.
+func fieldsOf(s *status.Status) []errors.FieldError {
+	var out []errors.FieldError
+	for _, d := range s.Details() {
+		if br, ok := d.(*errdetails.BadRequest); ok {
+			for _, v := range br.GetFieldViolations() {
+				out = append(out, errors.FieldError{Field: v.GetField(), Rule: v.GetReason(), Message: v.GetDescription()})
+			}
+		}
+	}
+	return out
 }
 
 // statusError is a classified error that still presents its original

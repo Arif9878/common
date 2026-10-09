@@ -9,6 +9,7 @@ import (
 	"github.com/Arif9878/common/go/lifecycle/graceful"
 	"github.com/Arif9878/common/go/transport/http/echoadapter"
 	"github.com/Arif9878/common/go/transport/http/httpserver"
+	"github.com/Arif9878/common/go/validation"
 )
 
 // EchoOption configures [EchoServer].
@@ -29,6 +30,8 @@ func EchoMiddlewareOptions(opts ...httpserver.Option) EchoOption {
 //
 //   - e.HTTPErrorHandler is echoadapter.ErrorHandler, so classified errors
 //     become problem+json responses with the status of their kind;
+//   - e.Validator is validation.New(), so c.Validate(&req) checks validate
+//     tags and answers 400 listing every invalid field;
 //   - echoadapter.Middleware (request ID, tracing, metrics, access log,
 //     panic recovery) runs with the graph's logger and telemetry, labeling
 //     spans and metrics with the route template (/orders/:id).
@@ -54,6 +57,7 @@ func EchoServer(opts ...EchoOption) fx.Option {
 			e := echo.New()
 			e.HideBanner, e.HidePort = true, true // the access log and Serve report it
 			e.HTTPErrorHandler = echoadapter.ErrorHandler
+			e.Validator = validation.New() // c.Validate: 400 with every invalid field
 			e.Use(echoadapter.Middleware(append(t.httpServer(), o.middleware...)...))
 			return e
 		}),
