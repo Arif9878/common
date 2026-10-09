@@ -39,7 +39,7 @@ It also rejects v2 and later until the module paths carry the `/vN` suffix Go re
 | `refactor!: …`, or any type with a `BREAKING CHANGE: <how to upgrade>` footer | Breaking changes, with the footer as the upgrade note |
 | `docs`, `test`, `ci`, `chore`, `build`, `refactor`, `style` | left out |
 
-Each entry links to the pull request that merged it, or to the commit for a direct push. `make changelog` prints the section for what's merged so far; the dry run of `make release` prints it too. To reword an entry, edit `CHANGELOG.md` and the GitHub release after releasing.
+The `commits` workflow fails a pull request whose title or commit subjects don't follow this format. Each entry links to the pull request that merged it, or to the commit for a direct push. `make changelog` prints the section for what's merged so far; the dry run of `make release` prints it too. To reword an entry, edit `CHANGELOG.md` and the GitHub release after releasing.
 
 **After a release:**
 

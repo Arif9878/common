@@ -1,0 +1,41 @@
+name: commits
+
+# The changelog is written from Conventional Commit subjects
+# (go/RELEASING.md), so every commit a pull request brings in, and its
+# title, must be one.
+on:
+  pull_request:
+    types: [opened, edited, synchronize, reopened]
+
+permissions:
+  contents: read
+
+jobs:
+  conventional:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - name: Check the title and commit subjects
+        env:
+          TITLE: ${{ github.event.pull_request.title }}
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          pattern='^(feat|fix|perf|refactor|docs|test|ci|chore|build|style|revert)(\([a-z0-9/._-]+\))?!?: .+'
+          bad=0
+          if ! grep -qE "$pattern" <<<"$TITLE"; then
+            echo "::error::Title is not a Conventional Commit: $TITLE"
+            bad=1
+          fi
+          while IFS= read -r subject; do
+            if ! grep -qE "$pattern" <<<"$subject"; then
+              echo "::error::Commit is not a Conventional Commit: $subject"
+              bad=1
+            fi
+          done < <(git log --no-merges --format=%s "$BASE..$HEAD")
+          if [ "$bad" = 1 ]; then
+            echo "Use type(scope): description, such as 'feat(kafka): add retry topics'. Types: feat, fix, perf, refactor, docs, test, ci, chore, build, style, revert. See go/RELEASING.md."
+            exit 1
+          fi
