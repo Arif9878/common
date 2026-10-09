@@ -1,0 +1,69 @@
+# Shared settings (OTLP endpoint, exporters) come from the observability
+# ConfigMap that every service uses; this file holds {{.Name}}'s own.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{.Name}}
+spec:
+  replicas: 2
+  selector:
+    matchLabels: { app.kubernetes.io/name: {{.Name}} }
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: {{.Name}}
+        app.kubernetes.io/version: "0.1.0"
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9090"
+    spec:
+      terminationGracePeriodSeconds: 60 # above the 45s fx stop timeout
+      containers:
+        - name: {{.Name}}
+          image: registry.example/{{.Name}}:0.1.0
+          ports:
+            - { name: http, containerPort: 8080 }
+            - { name: admin, containerPort: 9090 }
+          envFrom:
+            - configMapRef: { name: observability }
+{{- if .Postgres}}
+            - secretRef: { name: {{.Name}}-db } # POSTGRES_PASSWORD
+{{- end}}
+          env:
+            - name: OTEL_SERVICE_NAME
+              valueFrom: { fieldRef: { fieldPath: "metadata.labels['app.kubernetes.io/name']" } }
+            - name: SERVICE_VERSION
+              valueFrom: { fieldRef: { fieldPath: "metadata.labels['app.kubernetes.io/version']" } }
+            - name: POD_NAME
+              valueFrom: { fieldRef: { fieldPath: metadata.name } }
+            - name: POD_NAMESPACE
+              valueFrom: { fieldRef: { fieldPath: metadata.namespace } }
+            - name: OTEL_RESOURCE_ATTRIBUTES
+              value: service.version=$(SERVICE_VERSION),deployment.environment.name=production,k8s.pod.name=$(POD_NAME),k8s.namespace.name=$(POD_NAMESPACE)
+{{- if .Postgres}}
+            - { name: POSTGRES_HOST, value: postgres.data }
+            - { name: POSTGRES_DATABASE, value: {{.Ident}} }
+            - { name: POSTGRES_USER, value: {{.Ident}} }
+{{- end}}
+          startupProbe:
+            httpGet: { path: /startup, port: admin }
+            failureThreshold: 30
+            periodSeconds: 2
+          readinessProbe:
+            httpGet: { path: /ready, port: admin }
+            periodSeconds: 5
+          livenessProbe:
+            httpGet: { path: /live, port: admin }
+            periodSeconds: 10
+          resources:
+            requests: { cpu: 100m, memory: 128Mi }
+            limits: { memory: 256Mi }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{.Name}}
+spec:
+  selector: { app.kubernetes.io/name: {{.Name}} }
+  ports:
+    - { name: http, port: 80, targetPort: http }

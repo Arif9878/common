@@ -1,0 +1,57 @@
+// Package api is {{.Name}}'s HTTP API.
+package api
+
+import (
+{{- if .Postgres}}
+	"embed"
+	"io/fs"
+{{- end}}
+	"net/http"
+
+	"github.com/labstack/echo/v4"
+	"go.uber.org/fx"
+
+{{- if .Postgres}}
+	commonfx "github.com/Arif9878/common/go/fx"
+{{- end}}
+)
+
+{{- if .Postgres}}
+
+//go:embed migrations/*.sql
+var migrations embed.FS
+
+// Migrations are the goose migrations, applied at startup by
+// commonfx.PostgresMigrations, one replica at a time.
+var Migrations, _ = fs.Sub(migrations, "migrations")
+{{- end}}
+
+// Module wires the API into the fx application.
+var Module = fx.Options(
+{{- if .Postgres}}
+	commonfx.PostgresMigrations(Migrations),
+{{- end}}
+	fx.Invoke(RegisterRoutes),
+)
+
+// HelloRequest is the query of GET /v1/hello.
+type HelloRequest struct {
+	Name string `query:"name" json:"name" validate:"required,max=64"`
+}
+
+// RegisterRoutes adds the API to the Echo server from commonfx.EchoServer,
+// which already applies the standard middleware (request IDs, access
+// logs, tracing, metrics, panics) and turns returned errors into
+// problem+json responses.
+func RegisterRoutes(e *echo.Echo) {
+	e.GET("/v1/hello", func(c echo.Context) error {
+		var req HelloRequest
+		if err := c.Bind(&req); err != nil {
+			return err
+		}
+		if err := c.Validate(&req); err != nil { // 400 listing the invalid fields
+			return err
+		}
+		return c.JSON(http.StatusOK, map[string]string{"message": "hello, " + req.Name})
+	})
+}
