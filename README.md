@@ -3,8 +3,9 @@
 The organization's shared Go library for microservices. It covers configuration, observability, lifecycle, resilience, concurrency, transports, secrets, datastores, messaging and coordination, so every service handles these concerns the same, production-tested way.
 
 ```sh
-go get github.com/Arif9878/common/go@latest      # core
-go get github.com/Arif9878/common/go/fx@latest   # optional Uber fx integration
+go get github.com/Arif9878/common/go@latest                  # core
+go get github.com/Arif9878/common/go/messaging/kafka@latest  # integrations are separate modules, see below
+go get github.com/Arif9878/common/go/fx@latest               # optional Uber fx integration
 ```
 
 It requires **Go 1.26** or newer. Every package emits OpenTelemetry traces and metrics, classifies its errors with `errors.Kind`, and never logs secrets, request bodies or query parameters.
@@ -29,7 +30,8 @@ It requires **Go 1.26** or newer. Every package emits OpenTelemetry traces and m
 | gRPC | [`transport/grpc`](go/transport/grpc) | `grpcserver`, `grpcclient`, `grpcstatus` (error kinds ↔ status codes) |
 | Secrets | [`secret`](go/secret), [`secret/rotation`](go/secret/rotation), [`secret/vault`](go/secret/vault) | Provider-neutral secrets, zero-downtime credential rotation, Vault |
 | Datastores | [`datastore/postgres`](go/datastore/postgres), [`datastore/redis`](go/datastore/redis) | pgx and go-redis clients with telemetry, health and credential rotation |
-| Messaging | [`messaging/kafka`](go/messaging/kafka) | franz-go producer and consumer: at-least-once, per-partition order, bounded concurrency, batches, DLQ, idempotency |
+| Messaging | [`messaging/kafka`](go/messaging/kafka) | franz-go producer and consumer: at-least-once, per-partition order, bounded concurrency, batches, DLQ, idempotency; [`kafkaproto`](go/messaging/kafka/kafkaproto) for Protobuf with a Schema Registry |
+| | [`messaging/outbox`](go/messaging/outbox) | Transactional outbox: publish Kafka records if and only if a PostgreSQL transaction commits |
 | Coordination | [`idempotency`](go/idempotency) | Run once per key; PostgreSQL and Redis stores |
 | | [`lock`](go/lock) | Leases with fencing tokens; PostgreSQL and Redis |
 | | [`featureflag`](go/featureflag) | Feature flags through OpenFeature |
@@ -92,14 +94,25 @@ With Uber fx, [`go/fx`](go/fx) does this wiring for you.
 
 ## Versions and modules
 
-The repository holds two Go modules, tagged separately:
+The core module holds the light packages. Each heavy integration is its own module, so a service only downloads and builds the dependencies it uses (pgx, go-redis, franz-go, the Vault API, gRPC, Uber fx):
 
-| Module | Folder | Tags |
-|---|---|---|
-| `github.com/Arif9878/common/go` | `go/` | `go/vX.Y.Z` |
-| `github.com/Arif9878/common/go/fx` | `go/fx/` | `go/fx/vX.Y.Z` |
+| Module (`github.com/Arif9878/common/go/…`) | Brings in |
+|---|---|
+| `go` (core) | errors, config, observability, lifecycle, health, resilience, concurrency, HTTP, secret, idempotency and lock interfaces, featureflag, testkit |
+| `go/datastore/postgres` | pgx |
+| `go/datastore/redis` | go-redis |
+| `go/idempotency/pgstore`, `go/lock/pglock` | PostgreSQL implementations |
+| `go/idempotency/redisstore`, `go/lock/redislock` | Redis implementations |
+| `go/messaging/kafka` | franz-go, including `kafkaproto` (Protobuf + Schema Registry) |
+| `go/messaging/outbox` | Transactional outbox (PostgreSQL → Kafka) |
+| `go/secret/vault` | HashiCorp Vault API |
+| `go/transport/grpc` | gRPC (`grpcserver`, `grpcclient`, `grpcstatus`) |
+| `go/testkit/pgtest` | PostgreSQL test databases |
+| `go/fx` | Uber fx integration for all of the above |
 
-The fx module is separate so that services not using fx don't depend on fx, dig or zap. Each fx release requires the core release with the same version number. Before v1.0, minor versions may change behavior; release notes call out what changed and how to upgrade. See the [releases](https://github.com/Arif9878/common/releases).
+Import paths are the same as before the split: `go get` the module that holds the package, for example `go get github.com/Arif9878/common/go/messaging/kafka@latest`.
+
+All modules are released together with one version, and each is tagged with its folder: `go/v0.5.0`, `go/messaging/kafka/v0.5.0`, `go/fx/v0.5.0`. Use the same version for every module of this repository that a service requires. Before v1.0, minor versions may change behavior; release notes call out what changed and how to upgrade. See the [releases](https://github.com/Arif9878/common/releases) and [`go/RELEASING.md`](go/RELEASING.md).
 
 The packages from `go/v0.1.0` (`logger`, `observability`, `http`, `http/echo/*`, `constant`, `utils`) are deprecated and will be removed in v1.0. [`go/MIGRATION.md`](go/MIGRATION.md) shows the replacement for each.
 
@@ -107,8 +120,8 @@ The packages from `go/v0.1.0` (`logger`, `observability`, `http`, `http/echo/*`,
 
 ```sh
 cd go
-make check                    # tidy, vet, lint, test (race), govulncheck: what CI runs
-make -C fx check              # the same for the fx module
+make check                         # tidy, vet, lint, test (race), govulncheck in every module: what CI runs
+make test MODULES=messaging/kafka  # one module
 ```
 
 Integration tests run against real infrastructure when it is configured, and are skipped otherwise:

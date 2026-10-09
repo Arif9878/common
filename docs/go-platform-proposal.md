@@ -586,8 +586,14 @@ manual wiring. A mutation check (telemetry not passed to the HTTP middleware) ma
   and `Getenv`; `testkit/pgtest` gives a PostgreSQL connection from `POSTGRES_TEST_URL`.
   Deterministic time is `testing/synctest`; fakes stay with their packages. It is not an
   assertion framework, and a lint rule keeps production code from importing it.
-- Module split of the heavy integrations before v1.0 (§2), one module per integration (decided);
-  `go/fx` is already separate.
+- ~~Module split of the heavy integrations~~: done. Eleven modules besides core and `go/fx`:
+  `datastore/postgres`, `datastore/redis`, `idempotency/pgstore`, `idempotency/redisstore`,
+  `lock/pglock`, `lock/redislock`, `messaging/kafka` (with `kafkaproto`), `messaging/outbox`,
+  `secret/vault`, `transport/grpc`, `testkit/pgtest`. A Go module is a directory tree, so the
+  PostgreSQL and Redis stores and locks are modules of their own rather than part of the
+  datastore modules. Import paths are unchanged. Each `go.mod` replaces the others with their
+  directories for development; `internal/release` sets the requirements and tags all modules
+  together. Core no longer depends on pgx, go-redis, franz-go, the Vault API or gRPC.
 - Legacy packages stay until v1.0 (decided). `go/MIGRATION.md` gives the replacement for each.
 
 ## 13. Open questions for the team

@@ -5,7 +5,9 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net/url"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -13,7 +15,6 @@ import (
 	"time"
 
 	"github.com/Arif9878/common/go/testkit"
-	"github.com/Arif9878/common/go/testkit/pgtest"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -86,12 +87,20 @@ func TestUnreachableDoesNotLeakPassword(t *testing.T) {
 }
 
 // testConfig returns the POSTGRES_TEST_URL database with a small pool, or
-// skips the test.
+// skips the test. It does not use testkit/pgtest, which depends on this
+// package's module.
 func testConfig(t *testing.T) postgres.Config {
 	t.Helper()
-	cfg := pgtest.Config(t)
-	cfg.MaxConns = 5
-	return cfg
+	u, err := url.Parse(testkit.Getenv(t, "POSTGRES_TEST_URL"))
+	if err != nil {
+		t.Fatalf("POSTGRES_TEST_URL: %v", err)
+	}
+	port, _ := strconv.Atoi(u.Port())
+	pw, _ := u.User.Password()
+	return postgres.Config{
+		Host: u.Hostname(), Port: port, Database: strings.TrimPrefix(u.Path, "/"),
+		User: u.User.Username(), Password: config.Secret(pw), SSLMode: "disable", MaxConns: 5,
+	}
 }
 
 func newDB(t *testing.T, cfg postgres.Config, opts ...postgres.Option) *postgres.DB {

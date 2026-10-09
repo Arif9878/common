@@ -4,6 +4,15 @@ go 1.26.0
 
 require (
 	github.com/Arif9878/common/go v0.4.0
+	github.com/Arif9878/common/go/datastore/postgres v0.4.0
+	github.com/Arif9878/common/go/datastore/redis v0.4.0
+	github.com/Arif9878/common/go/idempotency/pgstore v0.4.0
+	github.com/Arif9878/common/go/idempotency/redisstore v0.4.0
+	github.com/Arif9878/common/go/messaging/kafka v0.4.0
+	github.com/Arif9878/common/go/messaging/outbox v0.4.0
+	github.com/Arif9878/common/go/secret/vault v0.4.0
+	github.com/Arif9878/common/go/testkit/pgtest v0.4.0
+	github.com/Arif9878/common/go/transport/grpc v0.4.0
 	github.com/alicebob/miniredis/v2 v2.39.0
 	github.com/hashicorp/vault/api v1.23.0
 	github.com/twmb/franz-go v1.22.1
@@ -23,7 +32,7 @@ require (
 	github.com/cenkalti/backoff/v4 v4.3.0 // indirect
 	github.com/cenkalti/backoff/v5 v5.0.3 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
-	github.com/exaring/otelpgx v0.12.1 // indirect
+	github.com/exaring/otelpgx v0.13.0 // indirect
 	github.com/felixge/httpsnoop v1.1.0 // indirect
 	github.com/gabriel-vasile/mimetype v1.4.15 // indirect
 	github.com/go-jose/go-jose/v4 v4.1.4 // indirect
@@ -46,7 +55,7 @@ require (
 	github.com/jackc/pgpassfile v1.0.0 // indirect
 	github.com/jackc/pgservicefile v0.0.0-20240606120523-5a60cdf6a761 // indirect
 	github.com/jackc/pgx/v5 v5.11.0 // indirect
-	github.com/jackc/puddle/v2 v2.2.2 // indirect
+	github.com/jackc/puddle/v2 v2.2.3 // indirect
 	github.com/klauspost/compress v1.20.0 // indirect
 	github.com/leodido/go-urn v1.5.0 // indirect
 	github.com/mitchellh/go-homedir v1.1.0 // indirect
@@ -91,7 +100,20 @@ require (
 	google.golang.org/protobuf v1.36.12 // indirect
 )
 
-// Development: build against the core module in this repository. At
-// release, set the require above to the matching core tag; consumers
-// ignore replace directives.
-replace github.com/Arif9878/common/go => ../
+// Development: build against the modules in this repository. Consumers
+// ignore replace directives; the release tool (internal/release) sets the
+// requirements above to the released version.
+replace (
+	github.com/Arif9878/common/go => ../
+	github.com/Arif9878/common/go/datastore/postgres => ../datastore/postgres
+	github.com/Arif9878/common/go/datastore/redis => ../datastore/redis
+	github.com/Arif9878/common/go/idempotency/pgstore => ../idempotency/pgstore
+	github.com/Arif9878/common/go/idempotency/redisstore => ../idempotency/redisstore
+	github.com/Arif9878/common/go/lock/pglock => ../lock/pglock
+	github.com/Arif9878/common/go/lock/redislock => ../lock/redislock
+	github.com/Arif9878/common/go/messaging/kafka => ../messaging/kafka
+	github.com/Arif9878/common/go/messaging/outbox => ../messaging/outbox
+	github.com/Arif9878/common/go/secret/vault => ../secret/vault
+	github.com/Arif9878/common/go/testkit/pgtest => ../testkit/pgtest
+	github.com/Arif9878/common/go/transport/grpc => ../transport/grpc
+)
