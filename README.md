@@ -107,9 +107,71 @@ fx.New(
 ).Run()
 ```
 
+## Observability backends
+
+Traces, metrics and logs use OpenTelemetry, and every exporter is chosen by configuration. Moving between Grafana, New Relic, Datadog or another backend therefore changes environment variables, not code. Put the shared OTLP settings in your configuration next to the per-signal ones:
+
+```go
+type Config struct {
+	OTLP    otlp.Config    `envPrefix:"OTLP_"`    // endpoint, headers (API key), protocol, TLS
+	Log     logging.Config `envPrefix:"LOG_"`     // OUTPUT: stdout | otlp | both
+	Logs    logs.Config    `envPrefix:"LOGS_"`    // EXPORTER: none | otlp
+	Tracing tracing.Config `envPrefix:"TRACING_"` // EXPORTER: none | otlp
+	Metrics metrics.Config `envPrefix:"METRICS_"` // EXPORTER: prometheus | otlp | prometheus,otlp
+}
+```
+
+The fx `Observability()` module picks these up when they're in the graph. Without fx, pass `tracing.WithOTLP(cfg.OTLP)`, `metrics.WithOTLP(cfg.OTLP)` and `logs.WithOTLP(cfg.OTLP)`, then `logging.WithLoggerProvider(lp.LoggerProvider())`. `OTLP_HEADERS` is a secret and never appears in logs. Name the service with `*_SERVICE`, `*_ENVIRONMENT` and `*_VERSION`, or with `OTEL_SERVICE_NAME` and `OTEL_RESOURCE_ATTRIBUTES`.
+
+**Grafana stack (self-hosted, through Grafana Alloy or an OpenTelemetry Collector)**
+
+```sh
+OTLP_ENDPOINT=alloy:4317  OTLP_INSECURE=true
+TRACING_EXPORTER=otlp                 # to Tempo
+METRICS_EXPORTER=prometheus           # Alloy scrapes /metrics into Mimir (or: otlp)
+LOG_OUTPUT=stdout                     # Alloy tails container logs into Loki (or: both, with LOGS_EXPORTER=otlp)
+```
+
+**Grafana Cloud**
+
+```sh
+OTLP_PROTOCOL=http
+OTLP_ENDPOINT=https://otlp-gateway-prod-<region>.grafana.net/otlp
+OTLP_HEADERS=Authorization=Basic%20<base64 of instanceID:token>
+TRACING_EXPORTER=otlp  METRICS_EXPORTER=otlp  LOGS_EXPORTER=otlp  LOG_OUTPUT=both
+```
+
+**New Relic**
+
+```sh
+OTLP_PROTOCOL=http
+OTLP_ENDPOINT=https://otlp.nr-data.net:4318          # EU accounts: https://otlp.eu01.nr-data.net:4318
+OTLP_HEADERS=api-key=<license key>
+TRACING_EXPORTER=otlp  METRICS_EXPORTER=otlp  LOGS_EXPORTER=otlp  LOG_OUTPUT=both
+METRICS_TEMPORALITY=delta                             # New Relic's preferred temporality
+LOG_TRACE_ID_KEY=trace.id  LOG_SPAN_ID_KEY=span.id    # logs-in-context for stdout logs shipped by the NR agent
+```
+
+**Datadog (through the Datadog Agent's OTLP intake)**
+
+```sh
+OTLP_ENDPOINT=datadog-agent:4317  OTLP_INSECURE=true
+TRACING_EXPORTER=otlp  METRICS_EXPORTER=otlp  METRICS_TEMPORALITY=delta
+LOG_OUTPUT=stdout                                     # the Agent collects container logs
+```
+
+**Any other OTLP backend** (Honeycomb, Elastic, Dynatrace, a Collector): set `OTLP_ENDPOINT` and the `OTLP_HEADERS` it requires, then choose the exporters. Settings you leave empty fall back to the standard `OTEL_EXPORTER_OTLP_*` variables.
+
+**Notes**
+
+- **Endpoint URLs:** with the HTTP protocol, a base URL such as `https://otlp.nr-data.net:4318` or `…/otlp` gets `/v1/traces`, `/v1/metrics` or `/v1/logs` appended.
+- **Per-signal overrides:** `TRACING_ENDPOINT`, `METRICS_ENDPOINT` and `LOGS_ENDPOINT` override the shared endpoint for one signal. A per-signal URL is used as is.
+- **Push interval:** metrics are pushed every `METRICS_EXPORT_INTERVAL` (60s by default).
+- **Moving between backends:** `METRICS_EXPORTER=prometheus,otlp` serves `/metrics` and pushes at the same time, so you can run both while you switch.
+
 ## Versions and modules
 
-The core module holds the light packages. Each heavy integration is its own module, so a service only downloads and builds the dependencies it uses (pgx, go-redis, franz-go, the Vault API, gRPC, Uber fx):
+The core module holds the light packages. Each heavy integration is its own module, so a service only downloads and builds the dependencies it uses: pgx, go-redis, franz-go, the Vault API, the gRPC server and client packages, and Uber fx. Core still depends on the gRPC library itself, because its OTLP exporters can send over gRPC.
 
 | Module (`github.com/Arif9878/common/go/…`) | Brings in |
 |---|---|

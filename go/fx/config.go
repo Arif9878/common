@@ -15,7 +15,9 @@ import (
 	"github.com/Arif9878/common/go/errors"
 	"github.com/Arif9878/common/go/lifecycle/graceful"
 	"github.com/Arif9878/common/go/observability/logging"
+	"github.com/Arif9878/common/go/observability/logs"
 	"github.com/Arif9878/common/go/observability/metrics"
+	"github.com/Arif9878/common/go/observability/otlp"
 	"github.com/Arif9878/common/go/observability/tracing"
 )
 
@@ -50,12 +52,27 @@ func ConfigFields[T any]() fx.Option {
 	return fx.Provide(provides...)
 }
 
-// Observability provides *slog.Logger (logging.New), *tracing.Provider and
-// *metrics.Provider (both registered as OpenTelemetry globals, so
-// instrumentation libraries use them), and the trace.TracerProvider,
-// metric.MeterProvider and propagation.TextMapPropagator interfaces, which
-// every commonfx module passes explicitly to the packages it builds. It needs logging.Config, tracing.Config
-// and metrics.Config in the graph. fx's own events are logged through the
+type observabilityIn struct {
+	fx.In
+	Log     logging.Config
+	Tracing tracing.Config
+	Metrics metrics.Config
+	OTLP    otlp.Config `optional:"true"`
+	Logs    logs.Config `optional:"true"`
+}
+
+// Observability provides *slog.Logger (logging.New), *tracing.Provider,
+// *metrics.Provider and *logs.Provider (registered as OpenTelemetry
+// globals, so instrumentation libraries use them), and the
+// trace.TracerProvider, metric.MeterProvider and
+// propagation.TextMapPropagator interfaces, which every commonfx module
+// passes explicitly to the packages it builds.
+//
+// It needs logging.Config, tracing.Config and metrics.Config in the graph.
+// otlp.Config and logs.Config are optional: with them, traces, metrics and
+// logs go to the backend the OTLP settings name, as their Exporter and
+// Output settings choose, so moving between Grafana, New Relic or another
+// backend is configuration only. fx's own events are logged through the
 // same logger at debug level, and the providers are flushed and stopped in
 // graceful.Telemetry, after everything else.
 func Observability() fx.Option {
@@ -67,22 +84,30 @@ func Observability() fx.Option {
 		}),
 		fx.Module("commonfx.observability",
 			fx.Provide(
-				func(cfg logging.Config) (*slog.Logger, error) { return logging.New(cfg) },
-				func(cfg tracing.Config) (*tracing.Provider, error) {
-					return tracing.Init(context.Background(), cfg, tracing.WithGlobal())
+				func(in observabilityIn) (*logs.Provider, error) {
+					return logs.Init(context.Background(), in.Logs, logs.WithOTLP(in.OTLP), logs.WithGlobal())
 				},
-				func(cfg metrics.Config) (*metrics.Provider, error) {
-					return metrics.Init(context.Background(), cfg, metrics.WithGlobal())
+				func(in observabilityIn, lp *logs.Provider) (*slog.Logger, error) {
+					return logging.New(in.Log, logging.WithLoggerProvider(lp.LoggerProvider()))
+				},
+				func(in observabilityIn) (*tracing.Provider, error) {
+					return tracing.Init(context.Background(), in.Tracing, tracing.WithGlobal(), tracing.WithOTLP(in.OTLP))
+				},
+				func(in observabilityIn) (*metrics.Provider, error) {
+					return metrics.Init(context.Background(), in.Metrics, metrics.WithGlobal(), metrics.WithOTLP(in.OTLP))
 				},
 				func(p *tracing.Provider) trace.TracerProvider { return p.TracerProvider() },
 				func(p *metrics.Provider) metric.MeterProvider { return p.MeterProvider() },
 				func() propagation.TextMapPropagator { return tracing.Propagator() },
 			),
-			fx.Invoke(func(g *graceful.Manager, tp *tracing.Provider, mp *metrics.Provider) error {
+			fx.Invoke(func(g *graceful.Manager, tp *tracing.Provider, mp *metrics.Provider, lp *logs.Provider) error {
 				if err := g.Register(graceful.Telemetry, "tracing", tp.Shutdown); err != nil {
 					return err
 				}
-				return g.Register(graceful.Telemetry, "metrics", mp.Shutdown)
+				if err := g.Register(graceful.Telemetry, "metrics", mp.Shutdown); err != nil {
+					return err
+				}
+				return g.Register(graceful.Telemetry, "logs", lp.Shutdown)
 			}),
 		),
 	)
