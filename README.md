@@ -250,6 +250,7 @@ The packages from `go/v0.1.0` (`logger`, `observability`, `http`, `http/echo/*`,
 cd go
 make check                         # tidy, vet, lint, test (race), govulncheck in every module: what CI runs
 make test MODULES=messaging/kafka  # one module
+make test COVER=1 && make cover-summary   # coverage per module, counting every package a test exercises
 ```
 
 Integration tests run against real infrastructure when it is configured, and are skipped otherwise:
@@ -257,6 +258,7 @@ Integration tests run against real infrastructure when it is configured, and are
 | Variable | Used by |
 |---|---|
 | `POSTGRES_TEST_URL=postgres://user:pass@host:5432/db` | `datastore/postgres`, `idempotency/pgstore`, `lock/pglock`, `testkit/pgtest` |
+| `REDIS_TEST_ADDR=host:6379` | `datastore/redis`, `idempotency/redisstore`, `lock/redislock`. These also run on miniredis without it; with it, the Lua scripts run on real Redis. Keys get a random `commontest:` prefix. |
 | `KAFKA_TEST_BROKERS=host:9092` (`make test-kafka`) | `messaging/kafka`. Without it, the tests use an in-process fake. Tests create and delete their own `commontest-*` topics, so a shared broker is safe to use. |
 
-CI runs both modules on Go 1.26 and 1.27, with PostgreSQL, and runs the Kafka tests against a Redpanda container. Production packages must not import `testkit`; a lint rule enforces this.
+CI runs every module on Go 1.26 and 1.27, with PostgreSQL and Redis, reports coverage per module in the job summary, and runs the Kafka tests against a Redpanda container. A nightly job runs govulncheck on `main` with the newest Go and opens (or updates) an issue when it finds a vulnerability. Production packages must not import `testkit`; a lint rule enforces this.

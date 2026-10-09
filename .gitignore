@@ -21,3 +21,5 @@ vendor/
 go.work
 
 docs/
+# make test COVER=1
+coverage.out

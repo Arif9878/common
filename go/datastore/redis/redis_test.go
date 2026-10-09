@@ -2,6 +2,7 @@ package redis_test
 
 import (
 	"context"
+	"crypto/rand"
 	stderrors "errors"
 	"fmt"
 	"io"
@@ -271,5 +272,35 @@ func TestStopIdempotent(t *testing.T) {
 	}
 	if err := c.Ping(context.Background()).Err(); !stderrors.Is(err, goredis.ErrClosed) {
 		t.Errorf("Ping after Stop = %v", err)
+	}
+}
+
+// TestCommandsOnRedis checks the client against the server in
+// REDIS_TEST_ADDR: commands, error classification, a Lua script and the
+// health check, on real Redis rather than miniredis.
+func TestCommandsOnRedis(t *testing.T) {
+	c := newClient(t, redis.Config{Addrs: []string{testkit.Getenv(t, "REDIS_TEST_ADDR")}})
+	ctx := context.Background()
+	key := "commontest:" + strings.ToLower(rand.Text()[:8])
+	t.Cleanup(func() { c.Del(context.Background(), key) })
+
+	if err := c.Set(ctx, key, "v", time.Minute).Err(); err != nil {
+		t.Fatal(err)
+	}
+	if v, err := c.Get(ctx, key).Result(); err != nil || v != "v" {
+		t.Fatalf("Get = %q, %v", v, err)
+	}
+	if _, err := c.Get(ctx, key+":missing").Result(); errors.KindOf(redis.Classify(err)) != errors.NotFound {
+		t.Errorf("missing key: %v", redis.Classify(err))
+	}
+	n, err := goredis.NewScript(`return redis.call('STRLEN', KEYS[1])`).Run(ctx, c, []string{key}).Int()
+	if err != nil || n != 1 {
+		t.Errorf("script = %d, %v", n, err)
+	}
+	if _, err := c.Do(ctx, "NOSUCHCOMMAND").Result(); errors.KindOf(redis.Classify(err)) != errors.Internal {
+		t.Errorf("server error not classified: %v", redis.Classify(err))
+	}
+	if err := c.HealthCheck(ctx); err != nil {
+		t.Fatal(err)
 	}
 }

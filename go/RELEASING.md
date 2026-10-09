@@ -15,7 +15,18 @@ The tool (`internal/release`) runs these steps:
 3. **Tag.** It tags every module at that commit: `go/v0.5.0`, `go/messaging/kafka/v0.5.0`, `go/fx/v0.5.0`, and so on.
 4. **Push and publish.** It pushes `main` and the tags, then creates a GitHub release per tag with generated notes. The core release is marked latest.
 
-It refuses to run unless you're on a clean `main` and every tag is new. It also rejects v2 and later until the module paths carry the `/vN` suffix Go requires.
+Before changing anything, the tool runs these checks, and the dry run shows their result:
+
+| Check | Fails when |
+|---|---|
+| Working tree, branch and tags | the tree has changes, you're not on `main`, or a tag already exists |
+| `main` matches the remote | local `main` is behind or ahead of the remote's `main` (pull or push first) |
+| CI on HEAD | a GitHub check on the commit failed, is still running, or hasn't started (needs `gh`; `-skip-ci` turns it off) |
+| API compatibility | `gorelease` finds incompatible API changes and the version only bumps the patch number. Before v1.0, incompatible changes need at least a minor version. New API in a patch release is reported but allowed. Modules without a previous release are skipped. `-skip-api-check` turns it off. |
+
+It also rejects v2 and later until the module paths carry the `/vN` suffix Go requires.
+
+`-trailer "Co-Authored-By: Name <email>"` adds a trailer to the release commit; the flag can be repeated.
 
 **After a release:**
 
