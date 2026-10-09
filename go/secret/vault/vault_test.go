@@ -293,10 +293,13 @@ func TestTokenRenewalAndRelogin(t *testing.T) {
 	f.mu.Unlock()
 	testkit.Eventually(t, 10*time.Second, "a new login after renewal stopped working",
 		func() bool { return f.logins.Load() >= 2 })
-	// The new token works.
-	if _, err := c.Get(context.Background(), "secret/data/app"); err != nil {
-		t.Fatalf("read with the new token: %v", err)
-	}
+	// The new token works. The fake replaces its token when the login
+	// request arrives, before the client has read the response, so wait
+	// for the client to switch.
+	testkit.Eventually(t, 5*time.Second, "a read with the new token", func() bool {
+		_, err := c.Get(context.Background(), "secret/data/app")
+		return err == nil
+	})
 }
 
 func TestRotationWithDynamicCredentials(t *testing.T) {
