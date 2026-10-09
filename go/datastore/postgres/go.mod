@@ -21,7 +21,7 @@ replace (
 )
 
 require (
-	github.com/Arif9878/common/go v0.5.0
+	github.com/Arif9878/common/go v0.6.0
 	github.com/exaring/otelpgx v0.13.0
 	github.com/jackc/pgx/v5 v5.11.0
 	github.com/jackc/puddle/v2 v2.2.3
