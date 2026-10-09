@@ -1,0 +1,26 @@
+version: 2
+updates:
+  # Every Go module under go/ (core, fx, and the integration modules).
+  - package-ecosystem: gomod
+    directories:
+      - "/go"
+      - "/go/**/*"
+    schedule:
+      interval: weekly
+    ignore:
+      # Modules of this repository are bumped together by the release tool.
+      - dependency-name: "github.com/Arif9878/common/*"
+    groups:
+      opentelemetry:
+        patterns: ["go.opentelemetry.io/*"]
+      minor-and-patch:
+        update-types: [minor, patch]
+    open-pull-requests-limit: 5
+
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+    groups:
+      actions:
+        patterns: ["*"]

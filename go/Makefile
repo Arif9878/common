@@ -1,7 +1,7 @@
 GOLANGCI_LINT_VERSION := v2.14.0
 GOVULNCHECK_VERSION   := v1.8.0
 
-.PHONY: check tidy vet lint test vuln test-kafka
+.PHONY: check tidy vet lint test vuln test-kafka release
 
 check: tidy vet lint test vuln
 
@@ -26,3 +26,11 @@ vuln:
 test-kafka:
 	@test -n "$(KAFKA_TEST_BROKERS)" || { echo "set KAFKA_TEST_BROKERS=host:port[,host:port]"; exit 1; }
 	KAFKA_TEST_BROKERS=$(KAFKA_TEST_BROKERS) go test -race -count=1 -timeout 10m ./messaging/kafka/
+
+# Release every module of the repository together, e.g.
+#   make release VERSION=v0.5.0              # dry run: prints the plan
+#   make release VERSION=v0.5.0 PUSH=1       # commit, tag, push, GitHub releases
+# See RELEASING.md.
+release:
+	@test -n "$(VERSION)" || { echo "set VERSION=vX.Y.Z"; exit 1; }
+	go run ./internal/release -version $(VERSION) $(if $(PUSH),-push -github-release) $(if $(REMOTE),-remote $(REMOTE))
