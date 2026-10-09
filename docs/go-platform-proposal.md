@@ -404,6 +404,18 @@ is still waiting for an unreachable cluster. Metrics: `outbox.records.published`
 kfake: commit/rollback, header handling, NOTIFY wake-up, three relays (each record once, in
 order), a failing topic, and Stop releasing the lock; mutation-checked.
 
+### auth/jwtauth — ✅ implemented
+`jwtauth.New(ctx, cfg)` verifies OAuth/OIDC JWTs against the issuer's JWKS: discovery from the
+issuer (or `JWKS_URL`), keys fetched at startup (fail fast), refreshed every 15m and on an unknown
+`kid` (rate-limited to one per 30s; cached keys survive an outage). Verified: signature,
+asymmetric algorithm allow-list that must match the key family and the JWK's `alg` (no `none`, no
+HMAC with a public key), `use: enc` keys ignored, RSA ≥ 2048 bits, EC points on the curve, issuer,
+audience (required), `exp` (required), `nbf`, `iat` with leeway. Failures are Unauthorized with a
+generic public message; metrics `auth.tokens{outcome}` and `auth.jwks.refreshes{outcome}`.
+Adapters: `jwtauth.HTTP(v)` for `httpserver.Auth` (Echo via `echo.WrapMiddleware`),
+`RequireScope`/`CheckScopes`, `grpcserver.Bearer(v.Authenticate)`; fx: `JWTAuth`, `GRPCJWTAuth`
+(through the new `GRPCServerOptions` group). Mutation-checked tests against a fake provider.
+
 ### coordination — ✅ implemented
 **idempotency**: `idempotency.Do[T](ctx, store, key, fn, opts...)` / `DoOutcome` (reports
 `Duplicate`). Claim with lease (5m) → run → store result (24h) / release on failure; in-progress
