@@ -74,7 +74,7 @@ func TestOnceAcrossReplicas(t *testing.T) {
 		if n := runs.Load(); n != 10 {
 			t.Errorf("%d runs in 10 minutes across 3 replicas, want 10", n)
 		}
-		if n := metrics.Sum("schedule.runs", attribute.String("job", "report"), attribute.String("outcome", "skipped")); n != 20 {
+		if n := metrics.Sum("schedule.runs", attribute.String("job.name", "report"), attribute.String("outcome", "skipped")); n != 20 {
 			t.Errorf("skipped = %v, want 20", n)
 		}
 	})
@@ -151,7 +151,7 @@ func TestFailuresPanicsAndOverlap(t *testing.T) {
 			if !metrics.Has("schedule.runs") {
 				return 0
 			}
-			return metrics.Sum("schedule.runs", attribute.String("job", job), attribute.String("outcome", o))
+			return metrics.Sum("schedule.runs", attribute.String("job.name", job), attribute.String("outcome", o))
 		}
 		if outcome("fails", "failed") != 4 || outcome("panics", "panicked") != 4 {
 			t.Errorf("failed %v, panicked %v; want 4 each (the scheduler keeps going)", outcome("fails", "failed"), outcome("panics", "panicked"))
