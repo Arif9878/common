@@ -4,6 +4,30 @@ All modules of this repository are released together with one version
 (see [RELEASING.md](RELEASING.md)). The release tool writes each section
 from the Conventional Commits merged since the previous release.
 
+## [v0.8.0](https://github.com/Arif9878/common/releases/tag/go/v0.8.0) - 2026-10-09
+
+### Breaking changes
+
+- **schedule:** label job metrics job.name, not job ([#52](https://github.com/Arif9878/common/pull/52))
+
+  Schedule_runs_total and schedule_run_duration_seconds carry the job name in job_name instead of exported_job; update queries that used exported_job.
+
+### Features
+
+- **release:** check deferred modules' API after tagging ([#51](https://github.com/Arif9878/common/pull/51))
+- **redis:** add ratelimit, per-key rate limits shared by every replica ([#56](https://github.com/Arif9878/common/pull/56))
+- **pagination:** add cursor pagination for list endpoints ([#57](https://github.com/Arif9878/common/pull/57))
+- **tenant:** carry the tenant and user into logs, traces and downstream calls ([#58](https://github.com/Arif9878/common/pull/58))
+- **newservice:** generate a new service on the library ([#59](https://github.com/Arif9878/common/pull/59))
+- **testkit:** add redistest and kafkatest helpers ([#60](https://github.com/Arif9878/common/pull/60))
+- **kafka:** retry failed records after a delay through retry topics ([#55](https://github.com/Arif9878/common/pull/55))
+
+### Fixes
+
+- **release:** give the core module's GitHub release the changelog ([#49](https://github.com/Arif9878/common/pull/49))
+- **release:** bump the examples' requirements with each release ([#49](https://github.com/Arif9878/common/pull/49))
+- **kafka:** never retry a record before its delay ([#55](https://github.com/Arif9878/common/pull/55))
+
 ## [v0.7.0](https://github.com/Arif9878/common/releases/tag/go/v0.7.0) - 2026-10-09
 
 ### Breaking changes

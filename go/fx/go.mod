@@ -3,18 +3,18 @@ module github.com/Arif9878/common/go/fx
 go 1.26.0
 
 require (
-	github.com/Arif9878/common/go v0.7.0
-	github.com/Arif9878/common/go/datastore/postgres v0.7.0
-	github.com/Arif9878/common/go/datastore/redis v0.7.0
-	github.com/Arif9878/common/go/idempotency/pgstore v0.7.0
-	github.com/Arif9878/common/go/idempotency/redisstore v0.7.0
-	github.com/Arif9878/common/go/lock/pglock v0.7.0
-	github.com/Arif9878/common/go/lock/redislock v0.7.0
-	github.com/Arif9878/common/go/messaging/kafka v0.7.0
-	github.com/Arif9878/common/go/messaging/outbox v0.7.0
-	github.com/Arif9878/common/go/secret/vault v0.7.0
-	github.com/Arif9878/common/go/testkit/pgtest v0.7.0
-	github.com/Arif9878/common/go/transport/grpc v0.7.0
+	github.com/Arif9878/common/go v0.8.0
+	github.com/Arif9878/common/go/datastore/postgres v0.8.0
+	github.com/Arif9878/common/go/datastore/redis v0.8.0
+	github.com/Arif9878/common/go/idempotency/pgstore v0.8.0
+	github.com/Arif9878/common/go/idempotency/redisstore v0.8.0
+	github.com/Arif9878/common/go/lock/pglock v0.8.0
+	github.com/Arif9878/common/go/lock/redislock v0.8.0
+	github.com/Arif9878/common/go/messaging/kafka v0.8.0
+	github.com/Arif9878/common/go/messaging/outbox v0.8.0
+	github.com/Arif9878/common/go/secret/vault v0.8.0
+	github.com/Arif9878/common/go/testkit/pgtest v0.8.0
+	github.com/Arif9878/common/go/transport/grpc v0.8.0
 	github.com/alicebob/miniredis/v2 v2.39.0
 	github.com/golang-jwt/jwt/v5 v5.3.1
 	github.com/hashicorp/vault/api v1.23.0

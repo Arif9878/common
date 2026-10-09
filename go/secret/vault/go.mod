@@ -21,7 +21,7 @@ replace (
 )
 
 require (
-	github.com/Arif9878/common/go v0.7.0
+	github.com/Arif9878/common/go v0.8.0
 	github.com/hashicorp/vault/api v1.23.0
 	go.opentelemetry.io/otel v1.47.0
 	go.opentelemetry.io/otel/metric v1.47.0

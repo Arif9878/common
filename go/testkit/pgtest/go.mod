@@ -21,8 +21,8 @@ replace (
 )
 
 require (
-	github.com/Arif9878/common/go v0.7.0
-	github.com/Arif9878/common/go/datastore/postgres v0.7.0
+	github.com/Arif9878/common/go v0.8.0
+	github.com/Arif9878/common/go/datastore/postgres v0.8.0
 )
 
 require (
