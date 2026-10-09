@@ -7,7 +7,10 @@
 //	prometheus/alerts.yaml          error rates, latency, stopped partitions,
 //	                                consumer lag, dead-lettering, outbox relay,
 //	                                pool exhaustion, open breakers, expiring
-//	                                Vault tokens and credentials
+//	                                Vault tokens and credentials, auth, Redis,
+//	                                scheduled jobs, OAuth2 tokens, caches
+//	RUNBOOKS.md                     what to check and do for each alert
+//	                                (linked from its runbook_url annotation)
 //
 // Import the dashboard into Grafana (or provision it from the file); it
 // selects services by the job label, which Prometheus sets when scraping

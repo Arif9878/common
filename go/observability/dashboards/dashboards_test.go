@@ -3,6 +3,7 @@ package dashboards_test
 import (
 	"encoding/json"
 	"io/fs"
+	"os"
 	"regexp"
 	"slices"
 	"strings"
@@ -123,6 +124,7 @@ func TestAlertRules(t *testing.T) {
 	if err := yaml.Unmarshal(b, &file); err != nil {
 		t.Fatalf("alerts YAML: %v", err)
 	}
+	runbooks := runbookSections(t)
 	seen := map[string]bool{}
 	for _, g := range file.Groups {
 		for _, r := range g.Rules {
@@ -138,6 +140,12 @@ func TestAlertRules(t *testing.T) {
 			case !strings.Contains(r.Expr, "by (job"):
 				t.Errorf("%s: does not group by job", r.Alert)
 			}
+			if want := runbookBase + strings.ToLower(r.Alert); r.Annotations["runbook_url"] != want {
+				t.Errorf("%s: runbook_url %q, want %q", r.Alert, r.Annotations["runbook_url"], want)
+			}
+			if !runbooks[strings.ToLower(r.Alert)] {
+				t.Errorf("%s: no section \"### %s\" in RUNBOOKS.md", r.Alert, r.Alert)
+			}
 			seen[r.Alert] = true
 			for _, m := range metricsIn(r.Expr) {
 				if !names[m] {
@@ -149,4 +157,39 @@ func TestAlertRules(t *testing.T) {
 	if len(seen) < 15 {
 		t.Errorf("only %d alerts", len(seen))
 	}
+	for a := range runbooks {
+		if !seenLower(seen, a) {
+			t.Errorf("RUNBOOKS.md has a section for %s, which is not an alert", a)
+		}
+	}
+}
+
+// runbookBase is where the rules' runbook_url annotations point; the
+// anchor is the alert name in lower case, as GitHub renders headings.
+const runbookBase = "https://github.com/Arif9878/common/blob/main/go/observability/dashboards/RUNBOOKS.md#"
+
+// runbookSections returns the lower-cased "### Name" headings of
+// RUNBOOKS.md.
+func runbookSections(t *testing.T) map[string]bool {
+	t.Helper()
+	b, err := os.ReadFile("RUNBOOKS.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	sections := map[string]bool{}
+	for line := range strings.SplitSeq(string(b), "\n") {
+		if name, ok := strings.CutPrefix(line, "### "); ok {
+			sections[strings.ToLower(strings.TrimSpace(name))] = true
+		}
+	}
+	return sections
+}
+
+func seenLower(seen map[string]bool, lower string) bool {
+	for a := range seen {
+		if strings.ToLower(a) == lower {
+			return true
+		}
+	}
+	return false
 }
