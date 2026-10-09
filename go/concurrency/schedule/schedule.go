@@ -280,7 +280,7 @@ func (s *Scheduler) run(j *job, at time.Time) {
 
 	ctx = logging.ContextWithAttrs(ctx, slog.String("job", j.name))
 	ctx, span := s.tracerProv.Tracer("github.com/Arif9878/common/go/concurrency/schedule").Start(ctx,
-		"schedule "+j.name, trace.WithAttributes(attribute.String("job", j.name)))
+		"schedule "+j.name, trace.WithAttributes(attribute.String("job.name", j.name)))
 	start := time.Now()
 	err := call(ctx, j.fn)
 	tracing.End(span, &err)
@@ -310,9 +310,9 @@ func call(ctx context.Context, fn Job) (err error) {
 }
 
 func (s *Scheduler) record(j *job, outcome string, d time.Duration) {
-	attrs := metric.WithAttributes(attribute.String("job", j.name), attribute.String("outcome", outcome))
+	attrs := metric.WithAttributes(attribute.String("job.name", j.name), attribute.String("outcome", outcome))
 	s.runs.Add(context.Background(), 1, attrs)
 	if outcome != "skipped" {
-		s.duration.Record(context.Background(), d.Seconds(), metric.WithAttributes(attribute.String("job", j.name)))
+		s.duration.Record(context.Background(), d.Seconds(), metric.WithAttributes(attribute.String("job.name", j.name)))
 	}
 }
