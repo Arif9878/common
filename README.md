@@ -349,7 +349,7 @@ The core module holds the light packages. Each heavy integration is its own modu
 
 Import paths are the same as before the split: `go get` the module that holds the package, for example `go get github.com/Arif9878/common/go/messaging/kafka@latest`.
 
-All modules are released together with one version, and each is tagged with its folder: `go/v0.5.0`, `go/messaging/kafka/v0.5.0`, `go/fx/v0.5.0`. Use the same version for every module of this repository that a service requires. Before v1.0, minor versions may change behavior; release notes call out what changed and how to upgrade. See the [releases](https://github.com/Arif9878/common/releases) and [`go/RELEASING.md`](go/RELEASING.md). [`go/COMPATIBILITY.md`](go/COMPATIBILITY.md) says what counts as the API and how deprecations work.
+All modules are released together with one version, and each is tagged with its folder: `go/v0.5.0`, `go/messaging/kafka/v0.5.0`, `go/fx/v0.5.0`. Use the same version for every module of this repository that a service requires. Before v1.0, minor versions may change behavior; release notes call out what changed and how to upgrade. See the [releases](https://github.com/Arif9878/common/releases) and [`go/RELEASING.md`](go/RELEASING.md). [`go/COMPATIBILITY.md`](go/COMPATIBILITY.md) says what counts as the API, how deprecations work and what v1.0 waits for. After upgrading a service, file an *Upgrade feedback* issue: it is how v1.0 gets decided.
 
 The packages from `go/v0.1.0` (`logger`, `observability`, `http`, `http/echo/*`, `constant`, `utils`) have been removed; [`go/MIGRATION.md`](go/MIGRATION.md) shows the replacement for each. Services still using them stay on `go/v0.6.x` while they migrate.
 

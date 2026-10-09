@@ -86,6 +86,20 @@ All stop methods take a `context.Context` and return `error`, so they match `gra
 - Every component takes `WithMeterProvider`, `WithTracerProvider` and `WithLogger` options and falls back to the global providers and `slog.Default()`.
 - Metric names are dotted OpenTelemetry names (`cache.requests`); the Prometheus exporter turns them into `cache_requests_total`. Low-cardinality labels only: names given in code, outcomes, error kinds.
 
+## Road to v1.0
+
+v1.0 is when the promise above starts to bind strictly: after it, an incompatible change needs v2 and a new import path. It is released when all of these hold, tracked in the [v1.0 readiness issue](https://github.com/Arif9878/common/issues?q=label%3Av1-readiness):
+
+1. **Used in production.** At least three services run on the library in production for four weeks or more, between them covering the HTTP and gRPC servers, PostgreSQL with migrations, Kafka with the outbox, and Redis.
+2. **Upgrades are known to work.** Every adopting team has upgraded across at least one minor release and filed upgrade feedback (the *Upgrade feedback* issue template). Nothing they reported is open with the `v1-blocker` label.
+3. **The API has settled.** Two consecutive minor releases, or six weeks, without an incompatible change to the core module. Changes still wanted for v1 (renames, removals) are made before that window, not after.
+4. **Nothing deprecated remains.** Deprecated identifiers, environment variables and metric names are removed in the last minor release before v1.0, not carried into it.
+5. **Quality gates are green.** CI on both supported Go versions, the nightly fuzzing and govulncheck with no open findings for two weeks, every public package documented with an example, every alert with a runbook.
+
+Until then, minor releases may still change APIs; the release notes and `CHANGELOG.md` say how to upgrade, and the release tool refuses a version too small for the changes.
+
+A team that hits a breaking change the notes did not describe, or an upgrade that took more than an hour, files *Upgrade feedback*: that is the signal v1.0 waits on.
+
 ## Reporting a break
 
 If an upgrade breaks a service in a way this document says it shouldn't, that's a bug: open an issue with the versions and what changed. The fix is a patch release that restores the old behavior.

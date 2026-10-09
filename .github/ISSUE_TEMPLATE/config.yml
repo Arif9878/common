@@ -1,0 +1,5 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Compatibility promise and the road to v1.0
+    url: https://github.com/Arif9878/common/blob/main/go/COMPATIBILITY.md
+    about: What counts as a breaking change, and what v1.0 waits for.
