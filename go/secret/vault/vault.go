@@ -287,6 +287,26 @@ func classify(ctx context.Context, operation, path string, err error) error {
 }
 
 // Get reads the secret at path. It implements secret.Provider.
+// HealthCheck reports whether Vault answers and is initialized and
+// unsealed (standbys count as healthy: they forward requests). It matches
+// health.Check; register it as non-critical, since cached credentials keep
+// working while Vault is briefly unreachable.
+func (c *Client) HealthCheck(ctx context.Context) error {
+	return c.observe(ctx, "health", "sys/health", func(ctx context.Context) error {
+		h, err := c.api.Sys().HealthWithContext(ctx)
+		if err != nil {
+			return err
+		}
+		switch {
+		case !h.Initialized:
+			return errors.Unavailable.New("vault: not initialized")
+		case h.Sealed:
+			return errors.Unavailable.New("vault: sealed")
+		}
+		return nil
+	})
+}
+
 func (c *Client) Get(ctx context.Context, path string) (secret.Secret, error) {
 	var out secret.Secret
 	err := c.observe(ctx, "read", path, func(ctx context.Context) error {

@@ -263,16 +263,19 @@ spec:
   - the outbox: published, publish lag, relay failures, active relays
   - the PostgreSQL pool
   - circuit breakers, retries, rate limiters and idempotency
+  - authentication (jwtauth), the Redis pool, the Kafka client
   - the Go runtime
 
   Pick the service with the `job` variable. Prometheus sets `job` when it scrapes; Mimir and Grafana Cloud derive it from `service.name` for OTLP.
-- **[`prometheus/alerts.yaml`](go/observability/dashboards/prometheus/alerts.yaml):** 18 alerting rules, each grouped by `job`, with a severity, summary and description:
+- **[`prometheus/alerts.yaml`](go/observability/dashboards/prometheus/alerts.yaml):** 23 alerting rules, each grouped by `job`, with a severity, summary and description:
   - HTTP/gRPC error rate and latency
   - stopped Kafka partitions, consumer lag, dead-lettering, produce errors
   - a failing relay, no active relay, outbox lag
   - pool exhaustion and saturation
   - open breakers, exhausted retries, idempotency store errors
   - expiring Vault tokens and credentials, failing rotation
+  - unreachable identity-provider keys, a spike of invalid tokens, failing JWKS refreshes
+  - Redis pool timeouts, Kafka broker connection errors
 
   Load it as a rule file, or as a PrometheusRule's `spec.groups` with the Prometheus Operator. The thresholds are starting points.
 

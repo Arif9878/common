@@ -43,6 +43,7 @@ type fakeVault struct {
 	revoked      []string
 	lookupTTL    int
 	lookupRenews bool
+	sealed       bool
 }
 
 func newFakeVault(t *testing.T) *fakeVault {
@@ -63,6 +64,14 @@ func (f *fakeVault) serve(w http.ResponseWriter, r *http.Request) {
 	defer f.mu.Unlock()
 	path := strings.TrimPrefix(r.URL.Path, "/v1/")
 
+	if path == "sys/health" {
+		status := 200
+		if f.sealed {
+			status = 503
+		}
+		f.writeJSON(w, status, map[string]any{"initialized": true, "sealed": f.sealed})
+		return
+	}
 	if path == "auth/test/login" {
 		f.logins.Add(1)
 		if f.loginStatus != 200 {
@@ -366,5 +375,19 @@ func TestCloseIsIdempotent(t *testing.T) {
 	}
 	if c.API() == nil {
 		t.Fatal("API() returned nil")
+	}
+}
+
+func TestHealthCheck(t *testing.T) {
+	f := newFakeVault(t)
+	c := newClient(t, f)
+	if err := c.HealthCheck(context.Background()); err != nil {
+		t.Fatalf("healthy: %v", err)
+	}
+	f.mu.Lock()
+	f.sealed = true
+	f.mu.Unlock()
+	if err := c.HealthCheck(context.Background()); errors.KindOf(err) != errors.Unavailable {
+		t.Errorf("sealed: err = %v, want unavailable", err)
 	}
 }

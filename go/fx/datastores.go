@@ -12,6 +12,7 @@ import (
 	"github.com/Arif9878/common/go/lifecycle/graceful"
 	"github.com/Arif9878/common/go/messaging/kafka"
 	"github.com/Arif9878/common/go/secret"
+	"github.com/Arif9878/common/go/secret/rotation"
 	"github.com/Arif9878/common/go/secret/vault"
 )
 
@@ -93,11 +94,13 @@ type vaultIn struct {
 
 // Vault provides *vault.Client and secret.Provider from vault.Config,
 // logging in while the graph is built (with the api.AuthMethod in the
-// graph, if any, else Config.Token). It is closed in graceful.CloseDeps.
+// graph, if any, else Config.Token). It is added to the readiness checks
+// as non-critical (cached credentials keep working while Vault is briefly
+// down) and closed in graceful.CloseDeps.
 func Vault() fx.Option {
 	return fx.Module("commonfx.vault",
 		fx.Provide(
-			func(in vaultIn, g *graceful.Manager, t *telemetry) (*vault.Client, error) {
+			func(in vaultIn, g *graceful.Manager, checks *health.Checker, t *telemetry) (*vault.Client, error) {
 				ctx, cancel := connectCtx()
 				defer cancel()
 				opts := append(t.vault(), in.Options...)
@@ -108,6 +111,7 @@ func Vault() fx.Option {
 				if err != nil {
 					return nil, err
 				}
+				checks.AddReadiness("vault", c.HealthCheck, health.NonCritical())
 				return c, g.Register(graceful.CloseDeps, "vault", c.Close)
 			},
 			func(c *vault.Client) secret.Provider { return c },
@@ -135,4 +139,33 @@ func KafkaProducer() fx.Option {
 			return p, g.Register(graceful.Drain, "kafka producer", p.Close)
 		}),
 	)
+}
+
+// PostgresCredentialsFromVault makes [Postgres] log in with dynamic
+// credentials read from path in the graph's Vault ([Vault]), such as
+// "database/creds/orders", rotating the pool before they expire and
+// revoking replaced leases:
+//
+//	commonfx.Vault(),
+//	commonfx.Postgres(),
+//	commonfx.PostgresCredentialsFromVault("database/creds/orders"),
+func PostgresCredentialsFromVault(path string, opts ...rotation.Option) fx.Option {
+	return fx.Provide(fx.Annotate(
+		func(v *vault.Client, t *telemetry) postgres.Option {
+			return postgres.WithCredentials(v.Fetcher(path), v.Revoke, append(t.rotation(), opts...)...)
+		},
+		fx.ResultTags(PostgresOptions),
+	))
+}
+
+// RedisCredentialsFromVault makes [Redis] authenticate with credentials
+// read from path in the graph's Vault ([Vault]), rotating them before they
+// expire.
+func RedisCredentialsFromVault(path string, opts ...rotation.Option) fx.Option {
+	return fx.Provide(fx.Annotate(
+		func(v *vault.Client, t *telemetry) redis.Option {
+			return redis.WithCredentials(v.Fetcher(path), v.Revoke, append(t.rotation(), opts...)...)
+		},
+		fx.ResultTags(RedisOptions),
+	))
 }
