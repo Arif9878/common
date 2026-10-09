@@ -374,6 +374,25 @@ container (`kafka` job). They also pass against the team's Redpanda at 192.168.1
 which GitHub-hosted runners cannot reach (it is a private LAN address; a self-hosted runner
 would be needed to test it in CI).
 
+### messaging/outbox (transactional outbox) — ✅ implemented
+```go
+box := outbox.New()                                   // table kafka_outbox (outbox.Schema)
+box.Write(ctx, tx, records...)                        // in the business transaction; adds an event-id header
+relay := box.NewRelay(db, producer)                   // shutdown.Go(relay.Run); Register(StopIntake, relay.Stop)
+```
+A record is published iff its transaction commits, at least once (deleted after Kafka acks; a
+crash in between republishes it, and consumers drop repeats with
+`kafka.WithIdempotency(... kafka.HeaderKey(outbox.EventIDHeader))`). One relay at a time per
+table, through a session advisory lock on a dedicated connection (other replicas stand by);
+it publishes in id order in batches, wakes on LISTEN/NOTIFY sent at commit and polls as a
+fallback, and gives up the lock every minute so a pool rotation can replace its connection.
+Failures (Kafka or PostgreSQL down) keep the records and are retried. `Stop` finishes the
+round in flight within its deadline; it returns at the deadline even if the idempotent producer
+is still waiting for an unreachable cluster. Metrics: `outbox.records.published`,
+`outbox.publish.lag`, `outbox.relay.failures`, `outbox.relay.active`. Tests use PostgreSQL and
+kfake: commit/rollback, header handling, NOTIFY wake-up, three relays (each record once, in
+order), a failing topic, and Stop releasing the lock; mutation-checked.
+
 ### coordination — ✅ implemented
 **idempotency**: `idempotency.Do[T](ctx, store, key, fn, opts...)` / `DoOutcome` (reports
 `Duplicate`). Claim with lease (5m) → run → store result (24h) / release on failure; in-progress
