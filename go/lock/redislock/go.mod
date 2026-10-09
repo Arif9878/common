@@ -21,8 +21,8 @@ replace (
 )
 
 require (
-	github.com/Arif9878/common/go v0.4.0
-	github.com/Arif9878/common/go/datastore/redis v0.4.0
+	github.com/Arif9878/common/go v0.5.0
+	github.com/Arif9878/common/go/datastore/redis v0.5.0
 	github.com/alicebob/miniredis/v2 v2.39.0
 	github.com/redis/go-redis/v9 v9.23.0
 )
