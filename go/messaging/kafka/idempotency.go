@@ -2,13 +2,10 @@ package kafka
 
 import (
 	"context"
-	"log/slog"
 	"strconv"
 	"time"
 
 	"github.com/twmb/franz-go/pkg/kgo"
-	"go.opentelemetry.io/otel/attribute"
-	"go.opentelemetry.io/otel/metric"
 
 	"github.com/Arif9878/common/go/errors"
 	"github.com/Arif9878/common/go/idempotency"
@@ -118,10 +115,12 @@ func (c *Consumer) idempotent(h BatchHandler) BatchHandler {
 			}
 		}
 
+		dups, _ := ctx.Value(duplicatesKey{}).(duplicateSet)
 		duplicates := 0
 		inBatch := make(map[string]bool, len(rs))
 		for i, r := range rs {
 			key := cfg.Key(c.group, r)
+			delete(dups, r) // a retry re-decides records seen as duplicates before
 			if key == "" {
 				todo, claims, pos = append(todo, r), append(claims, claim{}), append(pos, i)
 				continue
@@ -129,6 +128,7 @@ func (c *Consumer) idempotent(h BatchHandler) BatchHandler {
 			if inBatch[key] {
 				// Same key earlier in this batch: that record is handled now,
 				// and this one is only committed if it is.
+				dups.add(r)
 				duplicates++
 				continue
 			}
@@ -141,17 +141,14 @@ func (c *Consumer) idempotent(h BatchHandler) BatchHandler {
 			case claimed:
 				todo, claims, pos = append(todo, r), append(claims, claim{key, token}), append(pos, i)
 			case existing.State == idempotency.Completed:
+				dups.add(r)
 				duplicates++
 			default:
 				release(claims)
 				return idempotency.ErrInProgress
 			}
 		}
-		if duplicates > 0 {
-			c.duplicates.Add(ctx, int64(duplicates), metric.WithAttributes(attribute.String("topic", rs[0].Topic)))
-			c.o.logger.DebugContext(ctx, "kafka records skipped as duplicates", slog.Int("count", duplicates))
-		}
-		if len(todo) == 0 {
+		if duplicates == len(rs) {
 			return nil
 		}
 
@@ -168,14 +165,15 @@ func (c *Consumer) idempotent(h BatchHandler) BatchHandler {
 			return nil
 		}
 		be, ok := errors.AsType[*BatchError](err)
-		if !ok || be.Processed <= 0 || be.Processed >= len(todo) {
+		if !ok || be.Processed < 0 || be.Processed >= len(todo) {
 			release(claims)
 			return err
 		}
 		c.complete(ctx, claims[:be.Processed])
 		release(claims[be.Processed:])
-		// The consumer counts processed records in rs, which also holds the
-		// duplicates skipped before the first unprocessed record.
+		// Processed counts records of rs, which also holds the duplicates
+		// skipped before the first unprocessed record; the consumer fails
+		// that record alone if the error is permanent.
 		return &BatchError{Processed: pos[be.Processed], Err: be.Err}
 	}
 }
@@ -195,3 +193,17 @@ func (c *Consumer) complete(ctx context.Context, claims []claim) {
 		}
 	}
 }
+
+// duplicateSet holds the records of one batch last found to be duplicates.
+// A record can be a duplicate on one attempt and handled on a retry (its
+// first copy in the batch failed), so the consumer counts the set once the
+// batch is done, rather than every attempt.
+type duplicateSet map[*kgo.Record]struct{}
+
+func (s duplicateSet) add(r *kgo.Record) {
+	if s != nil {
+		s[r] = struct{}{}
+	}
+}
+
+type duplicatesKey struct{}

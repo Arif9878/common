@@ -446,20 +446,30 @@ func TestBatchConsumerWithPartialFailure(t *testing.T) {
 	}
 	running(t, c)
 
-	// Batch [10..19] processes 10–12, fails at 13; 13–19 go to the DLQ as a unit.
-	dlq := consumeAll(t, k, k.T("t.dlq"), 7)
-	if string(dlq[0].Value) != "bad" || string(dlq[6].Value) != "19" {
-		t.Errorf("dlq = %s .. %s", dlq[0].Value, dlq[6].Value)
+	// Batch [10..19] processes 10–12 and fails at 13: only 13 goes to the
+	// DLQ, and 14–19 are handled after it.
+	dlq := consumeAll(t, k, k.T("t.dlq"), 1)
+	if len(dlq) != 1 || string(dlq[0].Value) != "bad" || header(dlq[0], "dlq.original.offset") != "13" {
+		t.Errorf("dlq = %d records, first %q at offset %s", len(dlq), dlq[0].Value, header(dlq[0], "dlq.original.offset"))
 	}
-	testkit.Eventually(t, 30*time.Second, "last batch", func() bool {
+	testkit.Eventually(t, 30*time.Second, "the 24 good records", func() bool {
 		mu.Lock()
 		defer mu.Unlock()
-		return len(handled) >= 18
+		return len(handled) >= 24
 	})
 	mu.Lock()
 	defer mu.Unlock()
 	if slices.Max(sizes) > 10 {
 		t.Errorf("batch sizes %v exceed 10", sizes)
+	}
+	want := make([]string, 0, 24)
+	for i := range 25 {
+		if i != 13 {
+			want = append(want, strconv.Itoa(i))
+		}
+	}
+	if !slices.Equal(handled, want) {
+		t.Errorf("handled %v, want %v in order", handled, want)
 	}
 }
 

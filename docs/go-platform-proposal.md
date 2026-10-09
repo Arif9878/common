@@ -359,7 +359,9 @@ handler calls (`WithConcurrency`, default 8), bounded per-partition buffers so p
 paused**, never silently skipped (`WithSkipOnFailure` opts in). On revoke, in-flight handlers
 finish (bounded), retry loops are abandoned, offsets committed, workers that overrun the
 timeout can no longer mark offsets. Batch handlers report partial progress with
-`*BatchError{Processed}`. `WithIdempotency(kafka.Idempotency{Store: redisstore.New(rdb)})` skips
+`*BatchError{Processed}`; a record that still fails after retries is dead-lettered (or
+skipped, or stops the partition) alone and the batch continues after it, while any other
+error fails the whole batch. `WithIdempotency(kafka.Idempotency{Store: redisstore.New(rdb)})` skips
 records already processed: keys (`OffsetKey` by default, `HeaderKey("event-id")` for events
 published twice) are claimed before the handler and completed after it; duplicates are committed
 without calling the handler (`kafka.consumer.duplicates`); a key in progress elsewhere is

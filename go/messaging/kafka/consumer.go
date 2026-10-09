@@ -27,9 +27,12 @@ type Handler func(ctx context.Context, r *kgo.Record) error
 // BatchHandler processes records of one partition, in offset order.
 type BatchHandler func(ctx context.Context, rs []*kgo.Record) error
 
-// BatchError reports that a batch handler processed only the first
-// Processed records before failing with Err. Those records are committed;
-// the rest are retried according to Err's kind.
+// BatchError reports that a batch handler processed the first Processed
+// records and then failed on record Processed with Err. Processed may be 0.
+// The processed records are committed, and the rest are retried according
+// to Err's kind. If record Processed still fails after retries, only that
+// record goes to the dead-letter topic (or is skipped, or stops the
+// partition), and the records after it are handled next.
 type BatchError struct {
 	Processed int
 	Err       error
@@ -233,7 +236,7 @@ func (c *Consumer) initMetrics() {
 		metric.WithDescription("Records per handler call."),
 		metric.WithExplicitBucketBoundaries(1, 5, 10, 25, 50, 100, 250, 500, 1000))
 	c.duplicates, _ = meter.Int64Counter("kafka.consumer.duplicates",
-		metric.WithDescription("Records skipped by WithIdempotency because they were already processed. They are also counted as success."))
+		metric.WithDescription("Records skipped by WithIdempotency because they were already processed, counted once per delivered batch. They are also counted as success."))
 	lag, _ := meter.Int64ObservableGauge("kafka.consumer.lag", metric.WithUnit("{record}"),
 		metric.WithDescription("Records behind the high watermark at the last poll, per partition."))
 	stopped, _ := meter.Int64ObservableGauge("kafka.consumer.partitions.stopped", metric.WithUnit("{partition}"),
@@ -450,31 +453,59 @@ func (c *Consumer) process(w *worker, batch []*kgo.Record) {
 	start := time.Now()
 	c.size.Record(ctx, int64(len(batch)), topicAttr)
 
+	var dups duplicateSet
+	if c.o.idem != nil {
+		dups = duplicateSet{}
+		ctx = context.WithValue(ctx, duplicatesKey{}, dups)
+	}
 	remaining := batch
-	attempt := 0
-	err = c.o.retry.Do(ctx, func(ctx context.Context) error {
-		if attempt++; attempt > 1 && w.stopping() {
-			return retry.Permanent(errRevoked) // don't keep retrying a partition we are giving up
-		}
-		err := c.call(ctx, remaining)
-		if be, ok := errors.AsType[*BatchError](err); ok && be.Processed > 0 && be.Processed < len(remaining) {
-			c.mark(w, remaining[be.Processed-1])
-			c.count(ctx, first.Topic, "success", be.Processed)
-			remaining = remaining[be.Processed:]
-			return be.Err
-		}
-		return err
-	})
-	c.duration.Record(ctx, time.Since(start).Seconds(), topicAttr)
+	for len(remaining) > 0 {
+		var culprit bool // err is about remaining[0] alone (a BatchError)
+		attempt := 0
+		err = c.o.retry.Do(ctx, func(ctx context.Context) error {
+			if attempt++; attempt > 1 && w.stopping() {
+				return retry.Permanent(errRevoked) // don't keep retrying a partition we are giving up
+			}
+			err := c.call(ctx, remaining)
+			culprit = false
+			if be, ok := errors.AsType[*BatchError](err); ok && be.Processed >= 0 && be.Processed < len(remaining) {
+				if be.Processed > 0 {
+					c.mark(w, remaining[be.Processed-1])
+					c.count(ctx, first.Topic, "success", be.Processed)
+					remaining = remaining[be.Processed:]
+				}
+				culprit = true
+				return be.Err
+			}
+			return err
+		})
 
-	switch {
-	case err == nil:
-		c.mark(w, remaining[len(remaining)-1])
-		c.count(ctx, first.Topic, "success", len(remaining))
-	case errors.Is(err, errRevoked), c.handlerCtx.Err() != nil:
-		// Interrupted by revoke or shutdown: leave uncommitted for redelivery.
-	default:
-		c.fail(ctx, w, remaining, err)
+		switch {
+		case err == nil:
+			c.mark(w, remaining[len(remaining)-1])
+			c.count(ctx, first.Topic, "success", len(remaining))
+			remaining = nil
+		case errors.Is(err, errRevoked), c.handlerCtx.Err() != nil:
+			// Interrupted by revoke or shutdown: leave uncommitted for redelivery.
+			remaining = nil
+		case culprit && len(remaining) > 1:
+			// Fail only the record the handler reported, then carry on
+			// with the rest of the batch, unless that stopped the partition.
+			c.fail(ctx, w, remaining[:1], err)
+			if w.failed.Load() {
+				remaining = nil
+			} else {
+				remaining = remaining[1:]
+			}
+		default:
+			c.fail(ctx, w, remaining, err)
+			remaining = nil
+		}
+	}
+	c.duration.Record(ctx, time.Since(start).Seconds(), topicAttr)
+	if n := len(dups); n > 0 {
+		c.duplicates.Add(ctx, int64(n), topicAttr)
+		c.o.logger.DebugContext(ctx, "kafka records skipped as duplicates", slog.Int("count", n))
 	}
 }
 

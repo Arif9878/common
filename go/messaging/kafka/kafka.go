@@ -48,10 +48,11 @@
 //
 // [NewBatchConsumer] hands records to the handler in per-partition batches
 // of up to WithBatchSize records, waiting up to WithBatchTimeout to fill a
-// batch. A batch handler that processed only some records returns
-// [*BatchError] with the number processed; those are committed and the
-// remaining records are retried. Any other error retries or fails the
-// whole batch.
+// batch. A batch handler that fails on one record returns [*BatchError]
+// with the number of records processed before it; those are committed and
+// the rest are retried. If that record still fails, only it is handled as
+// a failure (see above) and the batch continues after it. Any other error
+// retries or fails the whole batch, since the failed record is unknown.
 //
 // # Idempotency
 //
