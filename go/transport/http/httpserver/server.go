@@ -15,6 +15,7 @@ import (
 // Environment variable names are relative; the service chooses the prefix,
 // for example HTTP_.
 type Config struct {
+	// Addr is the listen address, host:port or :port.
 	Addr string `env:"ADDR" envDefault:":8080"`
 	// ReadHeaderTimeout bounds reading request headers; it protects against
 	// slow-header (Slowloris) attacks.
@@ -27,8 +28,9 @@ type Config struct {
 	WriteTimeout time.Duration `env:"WRITE_TIMEOUT" envDefault:"35s"`
 	// IdleTimeout bounds how long keep-alive connections wait for the next
 	// request.
-	IdleTimeout    time.Duration `env:"IDLE_TIMEOUT" envDefault:"120s"`
-	MaxHeaderBytes int           `env:"MAX_HEADER_BYTES" envDefault:"1048576"`
+	IdleTimeout time.Duration `env:"IDLE_TIMEOUT" envDefault:"120s"`
+	// MaxHeaderBytes bounds the size of request headers.
+	MaxHeaderBytes int `env:"MAX_HEADER_BYTES" envDefault:"1048576"`
 }
 
 func (c Config) withDefaults() Config {

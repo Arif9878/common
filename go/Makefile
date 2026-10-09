@@ -11,9 +11,9 @@ define each
 	@set -e; for m in $(MODULES); do echo "== $$m"; (cd $$m && $(1)); done
 endef
 
-.PHONY: check tidy vet lint test vuln test-kafka release
+.PHONY: check tidy vet lint test vuln envdoc envdoc-check examples test-kafka release
 
-check: tidy vet lint test vuln
+check: tidy vet lint envdoc-check test vuln examples
 
 tidy:
 	$(call each,go mod tidy -diff)
@@ -26,6 +26,23 @@ lint:
 
 test:
 	$(call each,go test -race -shuffle=on -count=1 ./...)
+
+# The example services in ../examples build against this checkout; check
+# them like a module, with the same lint configuration.
+EXAMPLES ?= $(shell find ../examples -name go.mod -not -path '*/vendor/*' -exec dirname {} \; 2>/dev/null | sort)
+
+examples:
+	@set -e; for m in $(EXAMPLES); do echo "== $$m"; (cd $$m && go mod tidy -diff && go vet ./... && \
+		go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@$(GOLANGCI_LINT_VERSION) run --config $(CURDIR)/.golangci.yml ./... && \
+		go test -race -count=1 ./...); done
+
+# ENVIRONMENT.md lists every configuration variable, generated from the
+# configuration structs; envdoc-check fails when it is out of date.
+envdoc:
+	go run ./internal/envdoc
+
+envdoc-check:
+	go run ./internal/envdoc -check
 
 vuln:
 	$(call each,go run golang.org/x/vuln/cmd/govulncheck@$(GOVULNCHECK_VERSION) ./...)

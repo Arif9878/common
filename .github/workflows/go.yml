@@ -38,6 +38,7 @@ jobs:
           cache-dependency-path: go/**/go.sum
           check-latest: true # security fixes ship as patch releases
       - run: make tidy vet test
+      - run: make examples # builds, lints and tests examples/ against this checkout
 
   lint:
     runs-on: ubuntu-latest
@@ -49,6 +50,7 @@ jobs:
           cache-dependency-path: go/**/go.sum
           check-latest: true # security fixes ship as patch releases
       - run: make lint
+      - run: make envdoc-check # ENVIRONMENT.md matches the configuration structs
 
   vuln:
     runs-on: ubuntu-latest

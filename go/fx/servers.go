@@ -62,6 +62,7 @@ func HTTPServer(opts ...HTTPOption) fx.Option {
 // AdminConfig configures the admin server. Environment variable names are
 // relative; for example ADMIN_ADDR with prefix ADMIN_.
 type AdminConfig struct {
+	// Addr is the admin listen address, for health probes and /metrics.
 	Addr string `env:"ADDR" envDefault:":9090"`
 }
 
@@ -107,6 +108,7 @@ func AdminServer() fx.Option {
 
 // GRPCConfig configures the gRPC server address.
 type GRPCConfig struct {
+	// Addr is the gRPC listen address.
 	Addr string `env:"ADDR" envDefault:":9091"`
 }
 

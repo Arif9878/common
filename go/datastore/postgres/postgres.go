@@ -69,24 +69,43 @@ import (
 // Config configures the pool. Environment variable names are relative; the
 // service chooses the prefix, for example PG_.
 type Config struct {
-	Host     string        `env:"HOST" envDefault:"localhost"`
-	Port     int           `env:"PORT" envDefault:"5432" validate:"min=1,max=65535"`
-	Database string        `env:"DATABASE,required"`
-	User     string        `env:"USER"`
+	// Host is the server host name or address.
+	Host string `env:"HOST" envDefault:"localhost"`
+	// Port is the server port.
+	Port int `env:"PORT" envDefault:"5432" validate:"min=1,max=65535"`
+	// Database is the database to connect to.
+	Database string `env:"DATABASE,required"`
+	// User is the role to log in as. With credential rotation
+	// (WithCredentials) the user and password come from the secret instead.
+	User string `env:"USER"`
+	// Password is the role's password.
 	Password config.Secret `env:"PASSWORD"`
 	// SSLMode is a libpq sslmode: disable, require, verify-ca or
 	// verify-full. The default, verify-full, checks the server certificate
 	// and host name; use disable only for local development.
-	SSLMode         string `env:"SSLMODE" envDefault:"verify-full" validate:"oneof=disable allow prefer require verify-ca verify-full"`
-	SSLRootCert     string `env:"SSLROOTCERT"`
+	SSLMode string `env:"SSLMODE" envDefault:"verify-full" validate:"oneof=disable allow prefer require verify-ca verify-full"`
+	// SSLRootCert is a PEM file with the CA certificates that verify the
+	// server; empty uses the system roots.
+	SSLRootCert string `env:"SSLROOTCERT"`
+	// ApplicationName is reported to the server, in pg_stat_activity and
+	// server logs.
 	ApplicationName string `env:"APPLICATION_NAME"`
 
-	MaxConns          int32         `env:"MAX_CONNS" envDefault:"10" validate:"min=1"`
-	MinConns          int32         `env:"MIN_CONNS" envDefault:"0" validate:"min=0"`
-	MaxConnLifetime   time.Duration `env:"MAX_CONN_LIFETIME" envDefault:"30m"`
-	MaxConnIdleTime   time.Duration `env:"MAX_CONN_IDLE_TIME" envDefault:"5m"`
+	// MaxConns is the pool size. Size it with the server's max_connections
+	// divided by the number of replicas.
+	MaxConns int32 `env:"MAX_CONNS" envDefault:"10" validate:"min=1"`
+	// MinConns keeps this many connections open while idle.
+	MinConns int32 `env:"MIN_CONNS" envDefault:"0" validate:"min=0"`
+	// MaxConnLifetime closes connections older than this, so they are recycled
+	// regularly.
+	MaxConnLifetime time.Duration `env:"MAX_CONN_LIFETIME" envDefault:"30m"`
+	// MaxConnIdleTime closes connections idle for this long.
+	MaxConnIdleTime time.Duration `env:"MAX_CONN_IDLE_TIME" envDefault:"5m"`
+	// HealthCheckPeriod is how often idle connections are checked.
 	HealthCheckPeriod time.Duration `env:"HEALTH_CHECK_PERIOD" envDefault:"1m"`
-	ConnectTimeout    time.Duration `env:"CONNECT_TIMEOUT" envDefault:"5s"`
+	// ConnectTimeout bounds opening one connection, TLS and authentication
+	// included.
+	ConnectTimeout time.Duration `env:"CONNECT_TIMEOUT" envDefault:"5s"`
 	// StatementTimeout makes the server cancel statements running longer;
 	// 0 leaves the server default.
 	StatementTimeout time.Duration `env:"STATEMENT_TIMEOUT"`
