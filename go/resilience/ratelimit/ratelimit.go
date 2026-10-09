@@ -19,8 +19,8 @@
 // handlers can send as a Retry-After header.
 //
 // Limits are per process: with N replicas the total rate is N times the
-// configured rate. Limits shared across replicas (distributed rate limiting)
-// need a shared store and live in the datastore packages.
+// configured rate. For limits shared across replicas, such as per tenant or
+// per API key, use github.com/Arif9878/common/go/datastore/redis/ratelimit.
 package ratelimit
 
 import (
