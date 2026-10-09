@@ -15,6 +15,7 @@ Secrets (`config.Secret`) never appear in logs or in printed configuration. Pack
 
 | Package | Struct |
 |---|---|
+| `auth/jwtauth` | [`jwtauth.Config`](#jwtauthconfig) |
 | `datastore/postgres` | [`postgres.Config`](#postgresconfig) |
 | `datastore/redis` | [`redis.Config`](#redisconfig) |
 | `fx` | [`commonfx.AdminConfig`](#commonfxadminconfig) |
@@ -30,6 +31,20 @@ Secrets (`config.Secret`) never appear in logs or in printed configuration. Pack
 | `secret/vault` | [`vault.Config`](#vaultconfig) |
 | `transport/http/httpclient` | [`httpclient.Config`](#httpclientconfig) |
 | `transport/http/httpserver` | [`httpserver.Config`](#httpserverconfig) |
+
+## jwtauth.Config
+
+`github.com/Arif9878/common/go/auth/jwtauth`: Config configures token verification.
+
+| Variable | Type | Default | Description |
+|---|---|---|---|
+| `ISSUER` | `string` | **required** | Issuer is the expected "iss" claim, such as https://keycloak.example.com/realms/main. |
+| `AUDIENCE` | `[]string (separated by ",")` | **required** | Audience lists the accepted "aud" values (this API's identifiers); a token must name at least one. |
+| `JWKS_URL` | `string` |  | JWKSURL is where the issuer publishes its keys. Empty discovers it from Issuer + /.well-known/openid-configuration. |
+| `ALGORITHMS` | `[]string (separated by ",")` | `RS256,RS384,RS512,PS256,PS384,PS512,ES256,ES384,ES512,EdDSA` | Algorithms are the accepted signing algorithms. |
+| `LEEWAY` | `time.Duration` | `30s` | Leeway tolerates this much clock skew in exp, nbf and iat. |
+| `JWKS_REFRESH_INTERVAL` | `time.Duration` | `15m` | RefreshInterval is how often the keys are refreshed in the background. |
+| `JWKS_MIN_REFRESH_INTERVAL` | `time.Duration` | `30s` | MinRefreshInterval is the least time between refreshes triggered by unknown key IDs. |
 
 ## postgres.Config
 
@@ -83,6 +98,7 @@ Secrets (`config.Secret`) never appear in logs or in printed configuration. Pack
 | Variable | Type | Default | Description |
 |---|---|---|---|
 | `ADDR` | `string` | `:9090` | Addr is the admin listen address, for health probes and /metrics. |
+| `PPROF` | `bool` |  | Pprof serves Go's runtime profiles under /debug/pprof/, for go tool pprof and for continuous profiling with Grafana Alloy and Pyroscope. |
 
 ## commonfx.GRPCClientConfig
 
