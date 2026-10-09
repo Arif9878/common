@@ -31,6 +31,7 @@ It requires **Go 1.26** or newer. Every package emits OpenTelemetry traces and m
 | gRPC | [`transport/grpc`](go/transport/grpc) | `grpcserver`, `grpcclient`, `grpcstatus` (error kinds ↔ status codes) |
 | Auth | [`auth/jwtauth`](go/auth/jwtauth) | Verify OAuth/OIDC JWTs (Keycloak, Auth0, Okta, Entra ID, …) with JWKS discovery and key rotation; scopes; HTTP, Echo and gRPC |
 | | [`auth/oauth2client`](go/auth/oauth2client) | OAuth 2.0 client credentials for service-to-service calls: cached tokens refreshed before expiry, for HTTP and gRPC clients |
+| Validation | [`validation`](go/validation) | Request validation (validator tags, JSON field names); 400 problem responses and gRPC BadRequest details listing every invalid field; `Decode` for net/http, `e.Validator` for Echo |
 | Secrets | [`secret`](go/secret), [`secret/rotation`](go/secret/rotation), [`secret/vault`](go/secret/vault) | Provider-neutral secrets, zero-downtime credential rotation, Vault |
 | Datastores | [`datastore/postgres`](go/datastore/postgres), [`datastore/redis`](go/datastore/redis) | pgx and go-redis clients with telemetry, health and credential rotation |
 | | [`datastore/postgres/migrate`](go/datastore/postgres/migrate) | goose SQL migrations at startup, one replica at a time (advisory lock); `commonfx.PostgresMigrations` |

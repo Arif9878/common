@@ -76,7 +76,7 @@ func TestOrderFlow(t *testing.T) {
 
 	// Errors are problem+json responses with the status of their kind.
 	if code, body := call(t, http.MethodPost, api+"/orders", `{"customer_id":"","amount":0}`); code != http.StatusBadRequest ||
-		!strings.Contains(body, "customer_id is required") {
+		!strings.Contains(body, `"field":"customer_id"`) || !strings.Contains(body, `"field":"amount"`) {
 		t.Errorf("invalid order = %d %s", code, body)
 	}
 	if code, _ := call(t, http.MethodGet, api+"/orders/999999", ""); code != http.StatusNotFound {

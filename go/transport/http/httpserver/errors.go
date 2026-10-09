@@ -63,6 +63,9 @@ type Problem struct {
 	// Code is the error kind, such as "not_found".
 	Code      string `json:"code"`
 	RequestID string `json:"request_id,omitempty"`
+	// Errors lists invalid fields, from errors.WithFields (the validation
+	// package attaches them).
+	Errors []errors.FieldError `json:"errors,omitempty"`
 }
 
 // WriteError writes err as a problem+json response with the status from
@@ -90,6 +93,7 @@ func WriteErrorStatus(w http.ResponseWriter, r *http.Request, status int, err er
 		Status: status,
 		Detail: errors.PublicMessage(err),
 		Code:   errors.KindOf(err).String(),
+		Errors: errors.Fields(err),
 	}
 	if status == http.StatusRequestEntityTooLarge {
 		p.Code, p.Detail = errors.InvalidArgument.String(), "request body too large"
