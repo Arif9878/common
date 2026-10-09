@@ -12,6 +12,7 @@ import (
 	"github.com/twmb/franz-go/pkg/kgo"
 	"github.com/twmb/franz-go/plugin/kotel"
 	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/baggage"
 	"go.opentelemetry.io/otel/metric"
 	"go.opentelemetry.io/otel/trace"
 
@@ -19,6 +20,7 @@ import (
 	"github.com/Arif9878/common/go/observability/logging"
 	"github.com/Arif9878/common/go/observability/tracing"
 	"github.com/Arif9878/common/go/resilience/retry"
+	"github.com/Arif9878/common/go/tenant"
 )
 
 // Handler processes one record.
@@ -70,6 +72,14 @@ func WithRetry(p *retry.Policy) Option { return func(o *options) { o.retry = p }
 func WithDLQ(p *Producer, topic string) Option {
 	return func(o *options) { o.dlq, o.dlqTopic = p, topic }
 }
+
+// WithTenant adopts the tenant the producer sent in the record's baggage
+// (see the tenant package): handlers see it with tenant.FromContext, and
+// their logs and spans carry it. Only use it on topics written by services
+// that set the tenant themselves. It applies to NewConsumer; batch
+// handlers get records of several tenants and read tenant.BaggageValue per
+// record if they need to.
+func WithTenant() Option { return func(o *options) { o.tenant = true } }
 
 // WithSkipOnFailure commits records that failed for good, after logging
 // them, instead of stopping their partition. Only use it when losing such
@@ -448,6 +458,9 @@ func (c *Consumer) process(w *worker, batch []*kgo.Record) {
 	ctx, span := c.startSpan(ctx, batch)
 	var err error
 	defer func() { tracing.End(span, &err) }()
+	if len(batch) == 1 {
+		ctx = c.withBaggage(ctx, first)
+	}
 
 	topicAttr := metric.WithAttributes(attribute.String("topic", first.Topic))
 	start := time.Now()
@@ -535,6 +548,22 @@ func (c *Consumer) startSpan(ctx context.Context, batch []*kgo.Record) (context.
 	return c.o.tracerProv.Tracer("github.com/Arif9878/common/go/messaging/kafka").Start(ctx,
 		batch[0].Topic+" process", trace.WithSpanKind(trace.SpanKindConsumer), trace.WithLinks(links...),
 		trace.WithAttributes(attribute.Int("messaging.batch.message_count", len(batch))))
+}
+
+// withBaggage adds the W3C baggage the producer sent with r to ctx, so
+// downstream calls forward it, and with WithTenant adopts its tenant.
+func (c *Consumer) withBaggage(ctx context.Context, r *kgo.Record) context.Context {
+	b := baggage.FromContext(c.o.propagators.Extract(context.Background(), kotel.NewRecordCarrier(r)))
+	if b.Len() == 0 {
+		return ctx
+	}
+	ctx = baggage.ContextWithBaggage(ctx, b)
+	if c.o.tenant {
+		if id, ok := tenant.BaggageValue(ctx); ok {
+			ctx = tenant.NewContext(ctx, id)
+		}
+	}
+	return ctx
 }
 
 func (c *Consumer) mark(w *worker, r *kgo.Record) {

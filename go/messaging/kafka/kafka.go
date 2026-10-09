@@ -189,6 +189,7 @@ type options struct {
 	commitInterval  time.Duration
 	resetToLatest   bool
 	idem            *Idempotency
+	tenant          bool
 }
 
 func newOptions(opts []Option) options {
