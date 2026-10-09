@@ -7,6 +7,9 @@ import (
 	"log/slog"
 	"os"
 	"strings"
+
+	"go.opentelemetry.io/contrib/bridges/otelslog"
+	otellog "go.opentelemetry.io/otel/log"
 )
 
 // Config configures a logger. The zero value logs JSON at info level to
@@ -21,12 +24,32 @@ type Config struct {
 	// AddSource adds the source file and line of the log call.
 	AddSource bool `env:"ADD_SOURCE"`
 
+	// Output is where records go: "stdout" (the writer, by default
+	// standard output, for a log shipper or kubectl logs), "otlp" (the
+	// OpenTelemetry LoggerProvider given with WithLoggerProvider; see the
+	// logs package) or "both".
+	Output string `env:"OUTPUT" envDefault:"stdout"`
+
+	// TraceIDKey and SpanIDKey name the trace fields written to standard
+	// output. The defaults, trace_id and span_id, suit Grafana Loki and most
+	// pipelines; use trace.id and span.id for New Relic's and Elastic's
+	// logs-in-context. OTLP records carry the IDs natively instead.
+	TraceIDKey string `env:"TRACE_ID_KEY" envDefault:"trace_id"`
+	SpanIDKey  string `env:"SPAN_ID_KEY" envDefault:"span_id"`
+
 	// Service, Environment and Version are added to every record.
 	// Empty values are omitted.
 	Service     string `env:"SERVICE"`
 	Environment string `env:"ENVIRONMENT"`
 	Version     string `env:"VERSION"`
 }
+
+// Outputs accepted in [Config].Output.
+const (
+	OutputStdout = "stdout"
+	OutputOTLP   = "otlp"
+	OutputBoth   = "both"
+)
 
 // Validate reports whether cfg is valid. [New] calls it.
 func (cfg Config) Validate() error {
@@ -35,10 +58,25 @@ func (cfg Config) Validate() error {
 	}
 	switch strings.ToLower(cfg.Format) {
 	case "", "json", "text":
-		return nil
 	default:
 		return errors.New("invalid format (want json or text)")
 	}
+	switch strings.ToLower(cfg.Output) {
+	case "", OutputStdout, OutputOTLP, OutputBoth:
+	default:
+		return errors.New("invalid output (want stdout, otlp or both)")
+	}
+	return nil
+}
+
+func (cfg Config) stdout() bool {
+	o := strings.ToLower(cfg.Output)
+	return o == "" || o == OutputStdout || o == OutputBoth
+}
+
+func (cfg Config) otlp() bool {
+	o := strings.ToLower(cfg.Output)
+	return o == OutputOTLP || o == OutputBoth
 }
 
 func (cfg Config) level() (slog.Level, error) {
@@ -59,6 +97,14 @@ type options struct {
 	writer     io.Writer
 	levelVar   *slog.LevelVar
 	redactKeys []string
+	provider   otellog.LoggerProvider
+}
+
+// WithLoggerProvider sends records to provider when Config.Output is
+// "otlp" or "both". Use the provider from logs.Init. It is ignored by
+// [NewHandler].
+func WithLoggerProvider(provider otellog.LoggerProvider) Option {
+	return func(o *options) { o.provider = provider }
 }
 
 // WithWriter sets the log destination. The default is os.Stdout.
@@ -81,8 +127,8 @@ func WithRedactKeys(patterns ...string) Option {
 	return func(o *options) { o.redactKeys = append(o.redactKeys, patterns...) }
 }
 
-// New returns a logger built from cfg. It returns an error if cfg.Level or
-// cfg.Format is invalid.
+// New returns a logger built from cfg. It returns an error if cfg is
+// invalid, or if cfg.Output includes "otlp" without [WithLoggerProvider].
 func New(cfg Config, opts ...Option) (*slog.Logger, error) {
 	o := options{writer: os.Stdout}
 	for _, opt := range opts {
@@ -99,12 +145,35 @@ func New(cfg Config, opts ...Option) (*slog.Logger, error) {
 		leveler = o.levelVar
 	}
 
-	hopts := &slog.HandlerOptions{Level: leveler, AddSource: cfg.AddSource}
-	var base slog.Handler
-	if strings.EqualFold(cfg.Format, "text") {
-		base = slog.NewTextHandler(o.writer, hopts)
-	} else {
-		base = slog.NewJSONHandler(o.writer, hopts)
+	traceKey, spanKey := cfg.TraceIDKey, cfg.SpanIDKey
+	if traceKey == "" {
+		traceKey = KeyTraceID
+	}
+	if spanKey == "" {
+		spanKey = KeySpanID
+	}
+
+	var outputs []slog.Handler
+	if cfg.stdout() {
+		hopts := &slog.HandlerOptions{Level: leveler, AddSource: cfg.AddSource}
+		if strings.EqualFold(cfg.Format, "text") {
+			outputs = append(outputs, slog.NewTextHandler(o.writer, hopts))
+		} else {
+			outputs = append(outputs, slog.NewJSONHandler(o.writer, hopts))
+		}
+	}
+	if cfg.otlp() {
+		if o.provider == nil {
+			return nil, errors.New("logging: output " + cfg.Output + " needs WithLoggerProvider (see the logs package)")
+		}
+		otel := otelslog.NewHandler("github.com/Arif9878/common/go/observability/logging",
+			otelslog.WithLoggerProvider(o.provider), otelslog.WithSource(cfg.AddSource))
+		// OTLP records carry trace context natively; drop the text fields.
+		outputs = append(outputs, &otlpOutput{next: otel, level: leveler, drop: []string{traceKey, spanKey}})
+	}
+	base := outputs[0]
+	if len(outputs) > 1 {
+		base = fanout(outputs)
 	}
 
 	var static []slog.Attr
@@ -119,6 +188,7 @@ func New(cfg Config, opts ...Option) (*slog.Logger, error) {
 	}
 
 	h := newHandler(base, o.redactKeys)
+	h.traceKey, h.spanKey = traceKey, spanKey
 	if len(static) > 0 {
 		return slog.New(h.WithAttrs(static)), nil
 	}

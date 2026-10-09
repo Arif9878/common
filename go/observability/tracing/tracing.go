@@ -51,11 +51,16 @@ import (
 
 	"github.com/Arif9878/common/go/errors"
 	"github.com/Arif9878/common/go/observability/internal/otelres"
+	"github.com/Arif9878/common/go/observability/internal/otlpconf"
+	"github.com/Arif9878/common/go/observability/otlp"
 )
 
 // Exporter names accepted in [Config].
 const (
-	ExporterNone     = "none"
+	ExporterNone = "none"
+	// ExporterOTLP exports over OTLP with the protocol of the shared
+	// otlp.Config ([WithOTLP]), else OTEL_EXPORTER_OTLP_PROTOCOL, else gRPC.
+	ExporterOTLP     = "otlp"
 	ExporterOTLPGRPC = "otlp-grpc"
 	ExporterOTLPHTTP = "otlp-http"
 )
@@ -64,10 +69,12 @@ const (
 // them. Environment variable names are relative; the service chooses the
 // prefix, for example TRACING_.
 type Config struct {
-	// Exporter is "none", "otlp-grpc" or "otlp-http".
+	// Exporter is "none", "otlp" (protocol from the shared otlp.Config),
+	// "otlp-grpc" or "otlp-http".
 	Exporter string `env:"EXPORTER" envDefault:"none"`
-	// Endpoint is the collector address, as host:port or a URL. Empty uses
-	// the OTEL_EXPORTER_OTLP_* variables or the exporter's default
+	// Endpoint overrides the shared otlp.Config endpoint for traces, as
+	// host:port or a URL. Empty uses the shared endpoint, then the
+	// OTEL_EXPORTER_OTLP_* variables, then the exporter's default
 	// (localhost:4317 for gRPC, localhost:4318 for HTTP).
 	Endpoint string `env:"ENDPOINT"`
 	// Insecure disables TLS to the collector.
@@ -83,12 +90,12 @@ type Config struct {
 	Version     string `env:"VERSION"`
 }
 
-var errUnknownExporter = stderrors.New("unknown exporter (want none, otlp-grpc or otlp-http)")
+var errUnknownExporter = stderrors.New("unknown exporter (want none, otlp, otlp-grpc or otlp-http)")
 
 // Validate reports whether cfg is valid. [Init] calls it.
 func (cfg Config) Validate() error {
 	switch strings.ToLower(cfg.Exporter) {
-	case "", ExporterNone, ExporterOTLPGRPC, ExporterOTLPHTTP:
+	case "", ExporterNone, ExporterOTLP, ExporterOTLPGRPC, ExporterOTLPHTTP:
 	default:
 		return errUnknownExporter
 	}
@@ -104,6 +111,14 @@ type Option func(*options)
 type options struct {
 	exporter sdktrace.SpanExporter
 	global   bool
+	otlp     otlp.Config
+}
+
+// WithOTLP sets the shared OTLP connection settings: endpoint, headers
+// (such as an API key), protocol, TLS, compression and timeout. Config's
+// Endpoint and Insecure override them for traces.
+func WithOTLP(cfg otlp.Config) Option {
+	return func(o *options) { o.otlp = cfg }
 }
 
 // WithExporter uses exp instead of the exporter named in Config, for
@@ -149,7 +164,7 @@ func Init(ctx context.Context, cfg Config, opts ...Option) (*Provider, error) {
 
 	exp := o.exporter
 	if exp == nil {
-		if exp, err = newExporter(ctx, cfg); err != nil {
+		if exp, err = newExporter(ctx, cfg, o.otlp); err != nil {
 			return nil, fmt.Errorf("tracing: %w", err)
 		}
 	}
@@ -165,39 +180,60 @@ func Init(ctx context.Context, cfg Config, opts ...Option) (*Provider, error) {
 	return &Provider{tp: tp}, nil
 }
 
-func newExporter(ctx context.Context, cfg Config) (sdktrace.SpanExporter, error) {
-	isURL := strings.Contains(cfg.Endpoint, "://")
-
-	switch strings.ToLower(cfg.Exporter) {
-	case "", ExporterNone:
+func newExporter(ctx context.Context, cfg Config, shared otlp.Config) (sdktrace.SpanExporter, error) {
+	exporter := strings.ToLower(cfg.Exporter)
+	if exporter == "" || exporter == ExporterNone {
 		return nil, nil
-	case ExporterOTLPGRPC:
+	}
+	set, err := otlpconf.Resolve("TRACES", exporter, shared, cfg.Endpoint, cfg.Insecure)
+	if err != nil {
+		return nil, err
+	}
+	if set.Protocol == otlp.ProtocolGRPC {
 		var opts []otlptracegrpc.Option
 		switch {
-		case isURL:
-			opts = append(opts, otlptracegrpc.WithEndpointURL(cfg.Endpoint))
-		case cfg.Endpoint != "":
-			opts = append(opts, otlptracegrpc.WithEndpoint(cfg.Endpoint))
+		case set.EndpointURL:
+			opts = append(opts, otlptracegrpc.WithEndpointURL(set.Endpoint))
+		case set.Endpoint != "":
+			opts = append(opts, otlptracegrpc.WithEndpoint(set.Endpoint))
 		}
-		if cfg.Insecure {
+		if set.Insecure {
 			opts = append(opts, otlptracegrpc.WithInsecure())
 		}
+		if set.Headers != nil {
+			opts = append(opts, otlptracegrpc.WithHeaders(set.Headers))
+		}
+		if set.Compression == "gzip" { // gRPC exports are uncompressed by default
+			opts = append(opts, otlptracegrpc.WithCompressor("gzip"))
+		}
+		if set.Timeout > 0 {
+			opts = append(opts, otlptracegrpc.WithTimeout(set.Timeout))
+		}
 		return otlptracegrpc.New(ctx, opts...)
-	case ExporterOTLPHTTP:
-		var opts []otlptracehttp.Option
-		switch {
-		case isURL:
-			opts = append(opts, otlptracehttp.WithEndpointURL(cfg.Endpoint))
-		case cfg.Endpoint != "":
-			opts = append(opts, otlptracehttp.WithEndpoint(cfg.Endpoint))
-		}
-		if cfg.Insecure {
-			opts = append(opts, otlptracehttp.WithInsecure())
-		}
-		return otlptracehttp.New(ctx, opts...)
-	default:
-		return nil, errUnknownExporter
 	}
+	var opts []otlptracehttp.Option
+	switch {
+	case set.EndpointURL:
+		opts = append(opts, otlptracehttp.WithEndpointURL(set.Endpoint))
+	case set.Endpoint != "":
+		opts = append(opts, otlptracehttp.WithEndpoint(set.Endpoint))
+	}
+	if set.Insecure {
+		opts = append(opts, otlptracehttp.WithInsecure())
+	}
+	if set.Headers != nil {
+		opts = append(opts, otlptracehttp.WithHeaders(set.Headers))
+	}
+	switch set.Compression {
+	case "gzip":
+		opts = append(opts, otlptracehttp.WithCompression(otlptracehttp.GzipCompression))
+	case "none":
+		opts = append(opts, otlptracehttp.WithCompression(otlptracehttp.NoCompression))
+	}
+	if set.Timeout > 0 {
+		opts = append(opts, otlptracehttp.WithTimeout(set.Timeout))
+	}
+	return otlptracehttp.New(ctx, opts...)
 }
 
 // TracerProvider returns the provider for passing to instrumentation.

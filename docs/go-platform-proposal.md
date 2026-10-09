@@ -593,7 +593,16 @@ manual wiring. A mutation check (telemetry not passed to the HTTP middleware) ma
   PostgreSQL and Redis stores and locks are modules of their own rather than part of the
   datastore modules. Import paths are unchanged. Each `go.mod` replaces the others with their
   directories for development; `internal/release` sets the requirements and tags all modules
-  together. Core no longer depends on pgx, go-redis, franz-go, the Vault API or gRPC.
+  together. Core no longer depends on pgx, go-redis, franz-go or the Vault API; it still
+  depends on the gRPC library through its OTLP gRPC exporters.
+- ~~Backend-neutral observability~~: done. `observability/otlp.Config` (endpoint, headers as a
+  secret, protocol, TLS, compression, timeout) is shared by traces, metrics and logs through
+  `WithOTLP`; per-signal endpoints override it. Metrics push over OTLP as well as or instead of
+  Prometheus (`METRICS_EXPORTER`), with delta temporality for New Relic and Datadog and Go
+  runtime metrics when Prometheus is off. `observability/logs` exports logs over OTLP;
+  `logging.Config.Output` sends records to stdout, OTLP or both, keeping redaction, with trace
+  IDs native in OTLP and configurable field names on stdout. The README shows configurations
+  for Grafana, Grafana Cloud, New Relic and Datadog.
 - Legacy packages stay until v1.0 (decided). `go/MIGRATION.md` gives the replacement for each.
 
 ## 13. Open questions for the team

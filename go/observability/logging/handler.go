@@ -37,7 +37,7 @@ func newHandler(next slog.Handler, extra []string) *handler {
 			patterns = append(patterns, n)
 		}
 	}
-	return &handler{next: next, redact: &redactor{patterns: patterns}}
+	return &handler{next: next, redact: &redactor{patterns: patterns}, traceKey: KeyTraceID, spanKey: KeySpanID}
 }
 
 // handler is immutable after construction and safe for concurrent use.
@@ -47,9 +47,11 @@ func newHandler(next slog.Handler, extra []string) *handler {
 // and attributes are kept in goas and applied in Handle; this lets the
 // context fields stay top-level instead of landing inside the group.
 type handler struct {
-	next   slog.Handler
-	redact *redactor
-	goas   []groupOrAttrs
+	next     slog.Handler
+	redact   *redactor
+	goas     []groupOrAttrs
+	traceKey string
+	spanKey  string
 }
 
 type groupOrAttrs struct {
@@ -130,8 +132,8 @@ func (h *handler) contextAttrs(ctx context.Context) []slog.Attr {
 	attrs := buf[:0]
 	if sc := trace.SpanContextFromContext(ctx); sc.IsValid() {
 		attrs = append(attrs,
-			slog.String(KeyTraceID, sc.TraceID().String()),
-			slog.String(KeySpanID, sc.SpanID().String()),
+			slog.String(h.traceKey, sc.TraceID().String()),
+			slog.String(h.spanKey, sc.SpanID().String()),
 		)
 	}
 	if id, ok := requestid.FromContext(ctx); ok {
