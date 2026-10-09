@@ -108,31 +108,32 @@ func run(o opts) error {
 	if err != nil {
 		return err
 	}
-	core := slices.IndexFunc(mods, func(m module) bool { return m.Dir == "go" })
-	if core < 0 {
+	i := slices.IndexFunc(mods, func(m module) bool { return m.Dir == "go" })
+	if i < 0 {
 		return errors.New("no core module in go/")
 	}
+	core := mods[i] // a copy: order reorders mods below
 	if o.notes {
-		prev, err := previousVersion(root, mods[core], "v999999.0.0")
+		prev, err := previousVersion(root, core, "v999999.0.0")
 		if err != nil {
 			return err
 		}
-		chs, err := changesSince(root, mods[core], prev)
+		chs, err := changesSince(root, core, prev)
 		if err != nil {
 			return err
 		}
-		fmt.Print(renderChangelog(repoURL(mods[core].Path), "Unreleased", "", chs))
+		fmt.Print(renderChangelog(repoURL(core.Path), "Unreleased", "", chs))
 		return nil
 	}
-	prev, err := previousVersion(root, mods[core], version)
+	prev, err := previousVersion(root, core, version)
 	if err != nil {
 		return err
 	}
-	chs, err := changesSince(root, mods[core], prev)
+	chs, err := changesSince(root, core, prev)
 	if err != nil {
 		return err
 	}
-	notes := renderChangelog(repoURL(mods[core].Path), version, time.Now().Format(time.DateOnly), chs)
+	notes := renderChangelog(repoURL(core.Path), version, time.Now().Format(time.DateOnly), chs)
 	if major := strings.SplitN(strings.TrimPrefix(version, "v"), ".", 2)[0]; major != "0" && major != "1" {
 		for _, m := range mods {
 			if !strings.HasSuffix(m.Path, "/v"+major) {
@@ -239,7 +240,7 @@ func run(o opts) error {
 
 	if ghRelease {
 		_, body, _ := strings.Cut(notes, "\n") // the title is the release name
-		coreTag := mods[core].Tag(version)
+		coreTag := core.Tag(version)
 		for _, tag := range tags {
 			args := []string{"release", "create", tag, "--verify-tag", "--title", tag}
 			if tag == coreTag {
