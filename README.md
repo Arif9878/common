@@ -162,6 +162,57 @@ LOG_OUTPUT=stdout                                     # the Agent collects conta
 
 **Any other OTLP backend** (Honeycomb, Elastic, Dynatrace, a Collector): set `OTLP_ENDPOINT` and the `OTLP_HEADERS` it requires, then choose the exporters. Settings you leave empty fall back to the standard `OTEL_EXPORTER_OTLP_*` variables.
 
+**Docker and Kubernetes**
+
+Everything above is read from the environment, so it belongs in the deployment, not in the image. Set the service's identity once, with the standard OpenTelemetry variables. Traces, metrics, OTLP logs and the `service`, `environment` and `version` fields of stdout logs all read them; `*_SERVICE`, `*_ENVIRONMENT` and `*_VERSION` still override them:
+
+| Variable | Example |
+|---|---|
+| `OTEL_SERVICE_NAME` | `orders` |
+| `OTEL_RESOURCE_ATTRIBUTES` | `service.version=1.4.2,deployment.environment.name=production,k8s.pod.name=…` |
+
+```yaml
+# docker-compose.yml
+services:
+  orders:
+    image: registry.example/orders:1.4.2
+    environment:
+      OTEL_SERVICE_NAME: orders
+      OTEL_RESOURCE_ATTRIBUTES: service.version=1.4.2,deployment.environment.name=staging
+      OTLP_ENDPOINT: otel-collector:4317
+      OTLP_INSECURE: "true"
+      TRACING_EXPORTER: otlp
+      METRICS_EXPORTER: prometheus,otlp
+```
+
+```yaml
+# Kubernetes: the name and version come from the Pod's labels, set once by the chart.
+spec:
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: orders
+        app.kubernetes.io/version: "1.4.2"
+    spec:
+      containers:
+        - name: orders
+          image: registry.example/orders:1.4.2
+          envFrom:
+            - configMapRef: { name: observability }     # OTLP_ENDPOINT, *_EXPORTER, LOG_OUTPUT: shared by every service
+            - secretRef: { name: otlp-credentials }     # OTLP_HEADERS=api-key=…
+          env:
+            - name: OTEL_SERVICE_NAME
+              valueFrom: { fieldRef: { fieldPath: "metadata.labels['app.kubernetes.io/name']" } }
+            - name: SERVICE_VERSION
+              valueFrom: { fieldRef: { fieldPath: "metadata.labels['app.kubernetes.io/version']" } }
+            - name: POD_NAME
+              valueFrom: { fieldRef: { fieldPath: metadata.name } }
+            - name: POD_NAMESPACE
+              valueFrom: { fieldRef: { fieldPath: metadata.namespace } }
+            - name: OTEL_RESOURCE_ATTRIBUTES
+              value: service.version=$(SERVICE_VERSION),deployment.environment.name=production,k8s.pod.name=$(POD_NAME),k8s.namespace.name=$(POD_NAMESPACE)
+```
+
 **Notes**
 
 - **Endpoint URLs:** with the HTTP protocol, a base URL such as `https://otlp.nr-data.net:4318` or `…/otlp` gets `/v1/traces`, `/v1/metrics` or `/v1/logs` appended.
