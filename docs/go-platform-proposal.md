@@ -405,8 +405,8 @@ kfake: commit/rollback, header handling, NOTIFY wake-up, three relays (each reco
 order), a failing topic, and Stop releasing the lock; mutation-checked.
 
 ### observability/dashboards and profiling — ✅ implemented
-A Grafana dashboard (`grafana/service-overview.json`, 42 panels selected by `$job`/`$instance`)
-and 18 Prometheus alerting rules (`prometheus/alerts.yaml`, grouped by `job`, with severity and
+A Grafana dashboard (`grafana/service-overview.json`, 53 panels, including jwtauth, the Redis pool and the Kafka client, selected by `$job`/`$instance`)
+and 23 Prometheus alerting rules (`prometheus/alerts.yaml`, grouped by `job`, with severity and
 annotations) for the library's metrics, embedded in `dashboards.FS`. The test scans every
 module's source for instrument registrations (plus otelhttp, otelgrpc and the OTel runtime
 metrics), creates them on a real Prometheus provider, scrapes the exposed names and checks that

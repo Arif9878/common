@@ -12,6 +12,7 @@ import (
 	"github.com/Arif9878/common/go/datastore/redis"
 	"github.com/Arif9878/common/go/health"
 	"github.com/Arif9878/common/go/messaging/kafka"
+	"github.com/Arif9878/common/go/secret/rotation"
 	"github.com/Arif9878/common/go/secret/vault"
 	"github.com/Arif9878/common/go/transport/grpc/grpcclient"
 	"github.com/Arif9878/common/go/transport/grpc/grpcserver"
@@ -98,6 +99,10 @@ func (t *telemetry) vault() []vault.Option {
 
 func (t *telemetry) kafka() []kafka.Option {
 	return optionsFor(t, kafka.WithLogger, kafka.WithTracerProvider, kafka.WithMeterProvider, kafka.WithPropagators)
+}
+
+func (t *telemetry) rotation() []rotation.Option {
+	return optionsFor(t, rotation.WithLogger, nil, rotation.WithMeterProvider, nil)
 }
 
 func (t *telemetry) health() []health.Option {

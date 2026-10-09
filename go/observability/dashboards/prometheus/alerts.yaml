@@ -158,3 +158,49 @@ groups:
         annotations:
           summary: "{{ $labels.job }}: the credential for {{ $labels.resource }} expires in under 2 minutes"
           description: "Rotation has not replaced it; connections will fail when it expires."
+
+  - name: common-auth
+    rules:
+      - alert: AuthKeysUnavailable
+        expr: sum by (job) (rate(auth_tokens_total{outcome="keys_unavailable"}[5m])) > 0
+        for: 5m
+        labels: { severity: critical }
+        annotations:
+          summary: "{{ $labels.job }}: tokens fail because the identity provider's keys cannot be fetched"
+          description: "Tokens are signed with a key not in the cache, and the JWKS is unreachable: valid users are rejected."
+      - alert: AuthInvalidTokensHigh
+        expr: |
+          sum by (job) (rate(auth_tokens_total{outcome=~"invalid|unknown_key"}[5m]))
+            / sum by (job) (rate(auth_tokens_total[5m])) > 0.2
+        for: 10m
+        labels: { severity: warning }
+        annotations:
+          summary: "{{ $labels.job }}: more than 20% of bearer tokens are invalid"
+          description: "A misconfigured client, a wrong AUTH_AUDIENCE or AUTH_ISSUER, or an attack. Expired tokens are not counted."
+      - alert: JWKSRefreshFailing
+        expr: sum by (job) (increase(auth_jwks_refreshes_total{outcome="failed"}[30m])) > 0
+        for: 30m
+        labels: { severity: warning }
+        annotations:
+          summary: "{{ $labels.job }}: refreshing the identity provider's keys fails"
+          description: "Cached keys are still used; a key rotation will reject tokens until the JWKS is reachable."
+
+  - name: common-redis
+    rules:
+      - alert: RedisPoolTimeouts
+        expr: sum by (job, pool_name) (rate(db_client_connections_timeouts_total[5m])) > 0
+        for: 5m
+        labels: { severity: warning }
+        annotations:
+          summary: "{{ $labels.job }}: commands time out waiting for a Redis connection"
+          description: "The pool is too small (REDIS_POOL_SIZE) or Redis is slow."
+
+  - name: common-kafka-client
+    rules:
+      - alert: KafkaBrokerConnectErrors
+        expr: sum by (job) (rate(messaging_kafka_connect_errors_count_total[5m])) > 0
+        for: 10m
+        labels: { severity: warning }
+        annotations:
+          summary: "{{ $labels.job }}: connections to Kafka brokers fail"
+          description: "Brokers are unreachable or reject the client (TLS or SASL)."

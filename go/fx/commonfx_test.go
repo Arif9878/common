@@ -315,3 +315,48 @@ func TestPostgres(t *testing.T) {
 		t.Error("pool still open after stop")
 	}
 }
+
+func TestVaultReadinessAndRedisCredentials(t *testing.T) {
+	m := miniredis.RunT(t)
+	m.RequireUserAuth("v-app-1", "pw-from-vault")
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/v1/auth/token/lookup-self":
+			_, _ = io.WriteString(w, `{"data":{"ttl":0,"renewable":false}}`)
+		case "/v1/sys/health":
+			_, _ = io.WriteString(w, `{"initialized":true,"sealed":false}`)
+		case "/v1/redis/creds/app":
+			_, _ = io.WriteString(w, `{"lease_id":"redis/creds/app/l1","lease_duration":3600,"renewable":true,
+				"data":{"username":"v-app-1","password":"pw-from-vault"}}`)
+		case "/v1/sys/leases/revoke":
+			w.WriteHeader(http.StatusNoContent)
+		default:
+			w.WriteHeader(404)
+			_, _ = io.WriteString(w, `{"errors":[]}`)
+		}
+	}))
+	defer srv.Close()
+
+	var rdb *redis.Client
+	var checks *health.Checker
+	app := fxtest.New(t,
+		fx.Supply(vault.Config{Address: srv.URL, Token: "root", MaxRetries: 0}, redis.Config{Addrs: []string{m.Addr()}}),
+		commonfx.Lifecycle(),
+		commonfx.Vault(),
+		commonfx.Redis(),
+		commonfx.RedisCredentialsFromVault("redis/creds/app"),
+		fx.Populate(&rdb, &checks),
+		commonfx.Ready(),
+	)
+	app.RequireStart()
+	defer app.RequireStop()
+
+	if err := rdb.Set(context.Background(), "k", "v", 0).Err(); err != nil {
+		t.Fatalf("Redis with Vault credentials: %v", err)
+	}
+	rep := checks.Ready(context.Background())
+	if rep.Checks["vault"].Status != health.StatusOK || rep.Checks["redis"].Status != health.StatusOK {
+		t.Errorf("readiness = %+v", rep)
+	}
+}

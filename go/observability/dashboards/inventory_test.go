@@ -21,6 +21,20 @@ var thirdParty = []instrument{
 	{"http.client.request.duration", "Float64Histogram", "s"}, // otelhttp, httpclient
 	{"rpc.server.duration", "Float64Histogram", "ms"},         // otelgrpc, grpcserver
 	{"rpc.client.duration", "Float64Histogram", "ms"},         // otelgrpc, grpcclient
+	// redisotel, datastore/redis: connection pool.
+	{"db.client.connections.usage", "Int64ObservableUpDownCounter", ""},
+	{"db.client.connections.max", "Int64ObservableUpDownCounter", ""},
+	{"db.client.connections.waits", "Int64ObservableCounter", ""},
+	{"db.client.connections.timeouts", "Int64ObservableCounter", ""},
+	{"db.client.connections.use_time", "Float64Histogram", "ms"},
+	// kotel, messaging/kafka: client connections and traffic.
+	{"messaging.kafka.connect_errors.count", "Int64Counter", "1"},
+	{"messaging.kafka.write_errors.count", "Int64Counter", "1"},
+	{"messaging.kafka.read_errors.count", "Int64Counter", "1"},
+	{"messaging.kafka.produce_bytes.count", "Int64Counter", "by"},
+	{"messaging.kafka.fetch_bytes.count", "Int64Counter", "by"},
+	{"messaging.kafka.produce_records.count", "Int64Counter", "1"},
+	{"messaging.kafka.fetch_records.count", "Int64Counter", "1"},
 	// Go runtime metrics pushed over OTLP when Prometheus is off.
 	{"go.goroutine.count", "Int64ObservableUpDownCounter", "{goroutine}"},
 	{"go.memory.used", "Int64ObservableUpDownCounter", "By"},
