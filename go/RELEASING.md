@@ -11,7 +11,7 @@ make release VERSION=v0.5.0 PUSH=1    # release
 The tool (`internal/release`) runs these steps:
 
 1. **Find and order the modules.** It finds every `go.mod` under `go/` and orders the modules so each comes after the modules it requires. Core comes first; for example `go/datastore/postgres` comes before `go/idempotency/pgstore`, which requires it.
-2. **Bump internal requirements and write the changelog.** A module that requires another module of this repository gets that requirement set to the new version, then `go mod tidy`. Consumers ignore `replace` directives, so a published module must require released versions. The tool also adds a section for the version to [`CHANGELOG.md`](CHANGELOG.md) (see below) and commits both on `main`.
+2. **Bump internal requirements and write the changelog.** A module that requires another module of this repository gets that requirement set to the new version, then `go mod tidy`. Consumers ignore `replace` directives, so a published module must require released versions. The modules under `examples/` get the same requirement bump (they are not tagged), so `go mod tidy` stays clean there. The tool also adds a section for the version to [`CHANGELOG.md`](CHANGELOG.md) (see below) and commits both on `main`.
 3. **Tag.** It tags every module at that commit: `go/v0.5.0`, `go/messaging/kafka/v0.5.0`, `go/fx/v0.5.0`, and so on.
 4. **Push and publish.** It pushes `main` and the tags, then creates a GitHub release per tag. The core release is marked latest and uses the changelog section as its notes; the other releases point to it.
 

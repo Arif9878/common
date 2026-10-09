@@ -21,13 +21,13 @@ replace (
 )
 
 require (
-	github.com/Arif9878/common/go v0.6.1
-	github.com/Arif9878/common/go/datastore/postgres v0.6.1
-	github.com/Arif9878/common/go/datastore/redis v0.6.1
-	github.com/Arif9878/common/go/fx v0.6.1
-	github.com/Arif9878/common/go/messaging/kafka v0.6.1
-	github.com/Arif9878/common/go/messaging/outbox v0.6.1
-	github.com/Arif9878/common/go/testkit/pgtest v0.6.1
+	github.com/Arif9878/common/go v0.7.0
+	github.com/Arif9878/common/go/datastore/postgres v0.7.0
+	github.com/Arif9878/common/go/datastore/redis v0.7.0
+	github.com/Arif9878/common/go/fx v0.7.0
+	github.com/Arif9878/common/go/messaging/kafka v0.7.0
+	github.com/Arif9878/common/go/messaging/outbox v0.7.0
+	github.com/Arif9878/common/go/testkit/pgtest v0.7.0
 	github.com/alicebob/miniredis/v2 v2.39.0
 	github.com/labstack/echo/v4 v4.16.0
 	github.com/twmb/franz-go v1.22.1
@@ -36,12 +36,12 @@ require (
 )
 
 require (
-	github.com/Arif9878/common/go/idempotency/pgstore v0.6.1 // indirect
-	github.com/Arif9878/common/go/idempotency/redisstore v0.6.1 // indirect
-	github.com/Arif9878/common/go/lock/pglock v0.6.1 // indirect
-	github.com/Arif9878/common/go/lock/redislock v0.6.1 // indirect
-	github.com/Arif9878/common/go/secret/vault v0.6.1 // indirect
-	github.com/Arif9878/common/go/transport/grpc v0.6.1 // indirect
+	github.com/Arif9878/common/go/idempotency/pgstore v0.7.0 // indirect
+	github.com/Arif9878/common/go/idempotency/redisstore v0.7.0 // indirect
+	github.com/Arif9878/common/go/lock/pglock v0.7.0 // indirect
+	github.com/Arif9878/common/go/lock/redislock v0.7.0 // indirect
+	github.com/Arif9878/common/go/secret/vault v0.7.0 // indirect
+	github.com/Arif9878/common/go/transport/grpc v0.7.0 // indirect
 	github.com/beorn7/perks v1.0.1 // indirect
 	github.com/caarlos0/env/v11 v11.4.1 // indirect
 	github.com/cenkalti/backoff/v4 v4.3.0 // indirect

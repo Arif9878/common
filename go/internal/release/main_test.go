@@ -69,3 +69,22 @@ func TestVersionFormat(t *testing.T) {
 		}
 	}
 }
+
+func TestFindExamples(t *testing.T) {
+	root := t.TempDir()
+	writeMod(t, root, "go", "module example.com/r/go\n\ngo 1.26\n")
+	writeMod(t, root, "examples/svc", "module example.com/r/examples/svc\n\ngo 1.26\n\nrequire (\n\texample.com/r/go v0.4.0\n\tgolang.org/x/net v0.60.0\n)\n")
+	writeMod(t, root, "examples/standalone", "module example.com/r/examples/standalone\n\ngo 1.26\n\nrequire golang.org/x/net v0.60.0\n")
+
+	mods, err := findModules(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ex, err := findExamples(root, mods)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(ex) != 1 || ex[0].Dir != "examples/svc" || !slices.Equal(ex[0].Requires, []string{"example.com/r/go"}) {
+		t.Errorf("examples = %+v, want examples/svc requiring example.com/r/go", ex)
+	}
+}
