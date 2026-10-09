@@ -2,11 +2,14 @@ package commonfx
 
 import (
 	"context"
+	"io/fs"
+	"time"
 
 	"github.com/hashicorp/vault/api"
 	"go.uber.org/fx"
 
 	"github.com/Arif9878/common/go/datastore/postgres"
+	"github.com/Arif9878/common/go/datastore/postgres/migrate"
 	"github.com/Arif9878/common/go/datastore/redis"
 	"github.com/Arif9878/common/go/health"
 	"github.com/Arif9878/common/go/lifecycle/graceful"
@@ -135,4 +138,23 @@ func KafkaProducer() fx.Option {
 			return p, g.Register(graceful.Drain, "kafka producer", p.Close)
 		}),
 	)
+}
+
+// PostgresMigrations applies the goose migrations in fsys to the graph's
+// PostgreSQL ([Postgres]) while the application is built, so it starts
+// (and reports ready) only on the migrated schema. Replicas starting
+// together take turns through an advisory lock; see the migrate package.
+//
+//	//go:embed migrations/*.sql
+//	var migrations embed.FS
+//
+//	sub, _ := fs.Sub(migrations, "migrations")
+//	commonfx.PostgresMigrations(sub),
+func PostgresMigrations(fsys fs.FS, opts ...migrate.Option) fx.Option {
+	return fx.Invoke(func(db *postgres.DB, t *telemetry) error {
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
+		defer cancel()
+		_, err := migrate.Up(ctx, db, fsys, append([]migrate.Option{migrate.WithLogger(t.logger)}, opts...)...)
+		return err
+	})
 }
