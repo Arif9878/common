@@ -80,13 +80,14 @@ jobs:
           check-latest: true # security fixes ship as patch releases
       - name: Start Redpanda
         run: |
-          docker run -d --name redpanda -p 9092:9092 redpandadata/redpanda:v26.2.4 \
+          docker run -d --name redpanda -p 9092:9092 -p 8081:8081 redpandadata/redpanda:v26.2.4 \
             redpanda start --mode dev-container --smp 1 \
             --kafka-addr internal://0.0.0.0:9092 --advertise-kafka-addr internal://localhost:9092
           for i in $(seq 1 60); do
-            docker exec redpanda rpk cluster health --exit-when-healthy --watch 2>/dev/null && exit 0
+            docker exec redpanda rpk cluster health --exit-when-healthy --watch 2>/dev/null &&
+              curl -sf localhost:8081/subjects >/dev/null && exit 0 # the schema registry is up too
             sleep 2
           done
           docker logs redpanda
           exit 1
-      - run: make test-kafka KAFKA_TEST_BROKERS=localhost:9092
+      - run: make test-kafka KAFKA_TEST_BROKERS=localhost:9092 SCHEMA_REGISTRY_TEST_URL=http://localhost:8081

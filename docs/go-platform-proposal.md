@@ -349,7 +349,16 @@ p.Publish(ctx, recs...) / p.PublishAsync(ctx, r, done) / p.Close(ctx)   // Close
 c, _ := kafka.NewConsumer(ctx, cfg, group, topics, handler, opts...)    // or NewBatchConsumer
 c.Run(ctx); c.Close(ctx)                             // Run under graceful.Go; Close in StopIntake
 kafka.Typed(kafka.JSON[T]{}, h) / kafka.Encode(topic, key, v, kafka.JSON[T]{})
+serde, _ := kafkaproto.New[*pb.OrderCreated](ctx, rc, kafkaproto.ValueSubject(topic),
+    kafkaproto.WithSchema(protoSource))              // Protobuf + Schema Registry; omit to use latest
+kafka.Typed(serde, h) / kafka.Encode(topic, key, msg, serde)
 ```
+`messaging/kafka/kafkaproto` writes the Confluent wire format (magic byte, schema ID, message
+index, payload) so other languages' serializers interoperate. Producers register the `.proto`
+source (the registry returns the existing ID when unchanged and rejects incompatible changes);
+consumers use the subject's latest schema and accept any schema ID, rejecting values of another
+message type. Registry client errors at startup are InvalidArgument (unknown subject,
+incompatible schema) or Unavailable. Tested against a fake registry and, in CI, Redpanda's.
 Records are `*kgo.Record` throughout (no wrapper type hiding Kafka concepts). One worker
 goroutine per assigned partition (ordering per partition), a shared semaphore capping
 handler calls (`WithConcurrency`, default 8), bounded per-partition buffers so polling waits

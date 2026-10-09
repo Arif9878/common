@@ -21,8 +21,10 @@ vuln:
 	go run golang.org/x/vuln/cmd/govulncheck@$(GOVULNCHECK_VERSION) ./...
 
 # Kafka tests against real brokers instead of the in-process fake, e.g.
-#   make test-kafka KAFKA_TEST_BROKERS=192.168.11.196:9092
-# Each test creates and deletes its own commontest-* topics and groups.
+#   make test-kafka KAFKA_TEST_BROKERS=192.168.11.196:9092 SCHEMA_REGISTRY_TEST_URL=http://192.168.11.196:8081
+# Each test creates and deletes its own commontest-* topics, groups and
+# schema subjects. SCHEMA_REGISTRY_TEST_URL is optional.
 test-kafka:
 	@test -n "$(KAFKA_TEST_BROKERS)" || { echo "set KAFKA_TEST_BROKERS=host:port[,host:port]"; exit 1; }
-	KAFKA_TEST_BROKERS=$(KAFKA_TEST_BROKERS) go test -race -count=1 -timeout 10m ./messaging/kafka/
+	KAFKA_TEST_BROKERS=$(KAFKA_TEST_BROKERS) SCHEMA_REGISTRY_TEST_URL=$(SCHEMA_REGISTRY_TEST_URL) \
+		go test -race -count=1 -timeout 10m ./messaging/kafka/...
