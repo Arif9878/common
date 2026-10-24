@@ -29,10 +29,21 @@
 // grpcserver turn into 401 and UNAUTHENTICATED without revealing why; the
 // reason is in the error for logs and in the auth.tokens metric.
 //
+// # Audiences known at run time
+//
+// A service whose accepted audiences change while it runs (OAuth clients
+// that administrators register, one list per tenant or product) passes
+// [WithAudiencePerCall], may leave Config.Audience empty, and calls
+// [Verifier.VerifyAudience] with the audiences of the request at hand.
+// Verify then accepts only Config.Audience, which may be none: a forgotten
+// audience fails closed.
+//
 // # Keys and rotation
 //
 // New fetches the keys once, so a service with a wrong issuer or an
-// unreachable provider fails at startup. Afterwards the keys are refreshed
+// unreachable provider fails at startup; [WithLazyStart] skips that first
+// fetch, for a provider the service must not depend on to start (the first
+// token fetches the keys). Afterwards the keys are refreshed
 // in the background every Config.RefreshInterval, and at once when a token
 // names a key ID not in the cache (a key rotation), at most every
 // Config.MinRefreshInterval so tokens with made-up key IDs cannot flood the
@@ -48,6 +59,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -69,8 +81,13 @@ type Config struct {
 	// Issuer is the expected "iss" claim, such as
 	// https://keycloak.example.com/realms/main.
 	Issuer string `env:"ISSUER,required"`
+	// IssuerAliases are other spellings of the same issuer that tokens may
+	// carry; Google signs ID tokens with "https://accounts.google.com" or
+	// "accounts.google.com". Discovery always uses Issuer.
+	IssuerAliases []string `env:"ISSUER_ALIASES" envSeparator:","`
 	// Audience lists the accepted "aud" values (this API's identifiers); a
-	// token must name at least one.
+	// token must name at least one. It may be empty only with
+	// [WithAudiencePerCall].
 	Audience []string `env:"AUDIENCE,required" envSeparator:"," validate:"min=1"`
 	// JWKSURL is where the issuer publishes its keys. Empty discovers it
 	// from Issuer + /.well-known/openid-configuration.
@@ -96,6 +113,8 @@ type options struct {
 	meterProv metric.MeterProvider
 	now       func() time.Time
 	noSubject bool
+	lazy      bool
+	perCall   bool
 }
 
 // WithoutSubjectInTelemetry keeps the token's subject out of logs and
@@ -116,6 +135,16 @@ func WithMeterProvider(mp metric.MeterProvider) Option {
 	return func(o *options) { o.meterProv = mp }
 }
 
+// WithAudiencePerCall lets Config.Audience be empty, for a service that
+// gives the audiences with each call ([Verifier.VerifyAudience]).
+func WithAudiencePerCall() Option { return func(o *options) { o.perCall = true } }
+
+// WithLazyStart makes New return without fetching the keys: the first
+// token fetches them. For a provider the service must not depend on to
+// start; a wrong JWKSURL then shows on the first token instead of at
+// start-up. It needs Config.JWKSURL (no discovery at start).
+func WithLazyStart() Option { return func(o *options) { o.lazy = true } }
+
 // WithClock replaces the clock used for expiry and refreshes, for tests.
 func WithClock(now func() time.Time) Option { return func(o *options) { o.now = now } }
 
@@ -124,6 +153,7 @@ type Verifier struct {
 	cfg     Config
 	o       options
 	jwksURL string
+	issuers []string
 	parser  *jwt.Parser
 
 	mu          sync.Mutex
@@ -143,8 +173,8 @@ type Verifier struct {
 // New returns a Verifier for cfg, after fetching the issuer's keys. Stop it
 // with [Verifier.Close].
 func New(ctx context.Context, cfg Config, opts ...Option) (*Verifier, error) {
-	if cfg.Issuer == "" || len(cfg.Audience) == 0 {
-		return nil, errors.InvalidArgument.New("jwtauth: Config needs an Issuer and at least one Audience")
+	if cfg.Issuer == "" {
+		return nil, errors.InvalidArgument.New("jwtauth: Config needs an Issuer")
 	}
 	if len(cfg.Algorithms) == 0 {
 		cfg.Algorithms = []string{"RS256", "RS384", "RS512", "PS256", "PS384", "PS512", "ES256", "ES384", "ES512", "EdDSA"}
@@ -164,17 +194,25 @@ func New(ctx context.Context, cfg Config, opts ...Option) (*Verifier, error) {
 	for _, opt := range opts {
 		opt(&o)
 	}
+	if len(cfg.Audience) == 0 && !o.perCall {
+		return nil, errors.InvalidArgument.New("jwtauth: Config needs at least one Audience (or WithAudiencePerCall)")
+	}
 	if o.client == nil {
 		o.client = httpclient.New(httpclient.Config{Timeout: 10 * time.Second},
 			httpclient.WithName("jwks"), httpclient.WithRetry(), httpclient.WithLogger(o.logger),
 			httpclient.WithMeterProvider(o.meterProv))
 	}
 
+	if o.lazy && cfg.JWKSURL == "" {
+		return nil, errors.InvalidArgument.New("jwtauth: WithLazyStart needs Config.JWKSURL")
+	}
+
 	v := &Verifier{cfg: cfg, o: o, jwksURL: cfg.JWKSURL, stop: make(chan struct{}), done: make(chan struct{})}
+	v.issuers = append([]string{cfg.Issuer}, cfg.IssuerAliases...)
+	// Issuer and audience are checked after parsing (checkIssuer,
+	// checkAudience): the audiences may come with each call.
 	v.parser = jwt.NewParser(
 		jwt.WithValidMethods(cfg.Algorithms),
-		jwt.WithIssuer(cfg.Issuer),
-		jwt.WithAudience(cfg.Audience...),
 		jwt.WithLeeway(cfg.Leeway),
 		jwt.WithExpirationRequired(),
 		jwt.WithIssuedAt(),
@@ -193,8 +231,10 @@ func New(ctx context.Context, cfg Config, opts ...Option) (*Verifier, error) {
 		}
 		v.jwksURL = u
 	}
-	if err := v.refresh(ctx); err != nil {
-		return nil, err
+	if !o.lazy {
+		if err := v.refresh(ctx); err != nil {
+			return nil, err
+		}
 	}
 	go v.background() //nolint:gosec // the refresh outlives New's ctx; Close stops it
 	return v, nil
@@ -298,9 +338,26 @@ var (
 	errKeysUnavailable = errors.Unauthorized.New("jwtauth: token key not cached and the JWKS is unreachable")
 )
 
+var (
+	errIssuer   = errors.Unauthorized.New("jwtauth: token from another issuer")
+	errAudience = errors.Unauthorized.New("jwtauth: token for another audience")
+)
+
 // Verify checks token (without a "Bearer " prefix) and returns its claims.
-// Errors have kind Unauthorized.
+// Its audience must be one of Config.Audience. Errors have kind
+// Unauthorized.
 func (v *Verifier) Verify(ctx context.Context, token string) (*Claims, error) {
+	return v.verify(ctx, token, v.cfg.Audience)
+}
+
+// VerifyAudience is Verify with the accepted audiences given by the caller
+// instead of Config.Audience, for audiences known at run time. An empty
+// list accepts nothing.
+func (v *Verifier) VerifyAudience(ctx context.Context, token string, audiences []string) (*Claims, error) {
+	return v.verify(ctx, token, audiences)
+}
+
+func (v *Verifier) verify(ctx context.Context, token string, audiences []string) (*Claims, error) {
 	claims := &Claims{}
 	_, err := v.parser.ParseWithClaims(token, &claims.raw, func(t *jwt.Token) (any, error) {
 		kid, _ := t.Header["kid"].(string)
@@ -313,6 +370,12 @@ func (v *Verifier) Verify(ctx context.Context, token string) (*Claims, error) {
 		}
 		return publicKeyFor(t.Method, k.pub)
 	})
+	if err == nil {
+		err = v.checkIssuer(claims.raw)
+	}
+	if err == nil {
+		err = checkAudience(claims.raw, audiences)
+	}
 	outcome := "ok"
 	switch {
 	case err == nil:
@@ -369,4 +432,22 @@ func (v *Verifier) Authenticate(ctx context.Context, token string) (context.Cont
 		ctx = logging.ContextWithAttrs(ctx, slog.String(logging.KeyUserID, c.Subject))
 	}
 	return ctx, nil
+}
+
+func (v *Verifier) checkIssuer(c jwt.MapClaims) error {
+	iss, _ := c.GetIssuer()
+	if iss != "" && slices.Contains(v.issuers, iss) {
+		return nil
+	}
+	return errIssuer
+}
+
+func checkAudience(c jwt.MapClaims, accepted []string) error {
+	aud, _ := c.GetAudience()
+	for _, a := range aud {
+		if a != "" && slices.Contains(accepted, a) {
+			return nil
+		}
+	}
+	return errAudience
 }

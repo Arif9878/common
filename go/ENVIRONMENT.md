@@ -40,7 +40,8 @@ Secrets (`config.Secret`) never appear in logs or in printed configuration. Pack
 | Variable | Type | Default | Description |
 |---|---|---|---|
 | `ISSUER` | `string` | **required** | Issuer is the expected "iss" claim, such as https://keycloak.example.com/realms/main. |
-| `AUDIENCE` | `[]string (separated by ",")` | **required** | Audience lists the accepted "aud" values (this API's identifiers); a token must name at least one. |
+| `ISSUER_ALIASES` | `[]string (separated by ",")` |  | IssuerAliases are other spellings of the same issuer that tokens may carry; Google signs ID tokens with "https://accounts.google.com" or "accounts.google.com". Discovery always uses Issuer. |
+| `AUDIENCE` | `[]string (separated by ",")` | **required** | Audience lists the accepted "aud" values (this API's identifiers); a token must name at least one. It may be empty only with [WithAudiencePerCall]. |
 | `JWKS_URL` | `string` |  | JWKSURL is where the issuer publishes its keys. Empty discovers it from Issuer + /.well-known/openid-configuration. |
 | `ALGORITHMS` | `[]string (separated by ",")` | `RS256,RS384,RS512,PS256,PS384,PS512,ES256,ES384,ES512,EdDSA` | Algorithms are the accepted signing algorithms. |
 | `LEEWAY` | `time.Duration` | `30s` | Leeway tolerates this much clock skew in exp, nbf and iat. |
