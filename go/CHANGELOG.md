@@ -4,6 +4,16 @@ All modules of this repository are released together with one version
 (see [RELEASING.md](RELEASING.md)). The release tool writes each section
 from the Conventional Commits merged since the previous release.
 
+## [v0.9.0](https://github.com/Arif9878/common/releases/tag/go/v0.9.0) - 2026-10-24
+
+### Features
+
+- **jwtauth:** per-call audiences, issuer aliases and lazy start ([#67](https://github.com/Arif9878/common/pull/67))
+
+### Fixes
+
+- **release:** check deferred modules without asking the module proxy ([#63](https://github.com/Arif9878/common/pull/63))
+
 ## [v0.8.0](https://github.com/Arif9878/common/releases/tag/go/v0.8.0) - 2026-10-09
 
 ### Breaking changes
