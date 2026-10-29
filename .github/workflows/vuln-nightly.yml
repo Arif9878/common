@@ -57,7 +57,7 @@ jobs:
       - id: fuzz
         run: make fuzz FUZZTIME=2m
       - if: failure() && steps.fuzz.outcome == 'failure'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: fuzz-failures
           path: go/**/testdata/fuzz/
