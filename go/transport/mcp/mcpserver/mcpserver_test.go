@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -80,7 +81,7 @@ type fixture struct {
 	resource string
 }
 
-func newFixture(t *testing.T) *fixture {
+func newFixture(t *testing.T, opts ...mcpserver.Option) *fixture {
 	t.Helper()
 	f := &fixture{iss: newIssuer(t)}
 	mux := http.NewServeMux()
@@ -96,7 +97,7 @@ func newFixture(t *testing.T) *fixture {
 	t.Cleanup(func() { _ = v.Close(context.Background()) })
 	f.srv, err = mcpserver.New(mcpserver.Config{
 		Name: "orders", Version: "1.0.0", Resource: f.resource, AuthorizationServers: []string{f.iss.URL},
-	}, mcpserver.WithJWT(v), mcpserver.WithLogger(slog.New(slog.DiscardHandler)))
+	}, append([]mcpserver.Option{mcpserver.WithJWT(v), mcpserver.WithLogger(slog.New(slog.DiscardHandler))}, opts...)...)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -247,6 +248,41 @@ func TestAuthorization(t *testing.T) {
 				t.Errorf("WWW-Authenticate = %q, want it to contain %q", got, tc.challenge)
 			}
 		})
+	}
+}
+
+func TestEnabled(t *testing.T) {
+	var on atomic.Bool
+	f := newFixture(t, mcpserver.WithEnabled(func(context.Context) bool { return on.Load() }))
+	call := `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"get_order","arguments":{"id":"o-1"}}}`
+	status := func(token string) (int, string) {
+		resp := f.post(t, token, call)
+		defer func() { _ = resp.Body.Close() }()
+		return resp.StatusCode, resp.Header.Get("Retry-After")
+	}
+	// Off: refused before the token is looked at, valid or not.
+	if code, retry := status(f.iss.token(t, f.resource, "orders:read")); code != http.StatusServiceUnavailable || retry != "60" {
+		t.Errorf("off, with a token: %d, Retry-After %q", code, retry)
+	}
+	if code, _ := status(""); code != http.StatusServiceUnavailable {
+		t.Errorf("off, without a token: %d", code)
+	}
+	req, _ := http.NewRequestWithContext(t.Context(), http.MethodGet, f.http.URL+f.srv.MetadataPath(), nil)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("metadata while off: %d", resp.StatusCode)
+	}
+	// On again, at once.
+	on.Store(true)
+	if code, _ := status(f.iss.token(t, f.resource, "orders:read")); code != http.StatusOK {
+		t.Errorf("on: %d", code)
+	}
+	if code, _ := status(""); code != http.StatusUnauthorized {
+		t.Errorf("on, without a token: %d", code)
 	}
 }
 

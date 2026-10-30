@@ -63,6 +63,7 @@ type Option func(*options)
 type options struct {
 	auth       Authenticator
 	jwt        *jwtauth.Verifier
+	enabled    func(context.Context) bool
 	logger     *slog.Logger
 	meterProv  metric.MeterProvider
 	tracerProv trace.TracerProvider
@@ -72,6 +73,22 @@ type options struct {
 // [WithJWT] for JWT access tokens; WithAuth is for tokens it cannot verify,
 // such as a service's own opaque tokens.
 func WithAuth(authenticate Authenticator) Option { return func(o *options) { o.auth = authenticate } }
+
+// WithEnabled asks enabled before every request whether the server is on.
+// When it is off, requests get 503 Service Unavailable (Retry-After: 60)
+// before any token is checked, so tokens already issued stop working at
+// once; the metadata document is still served. Use it as a kill switch
+// through a feature flag, failing open:
+//
+//	mcpserver.WithEnabled(func(ctx context.Context) bool {
+//		on, _ := flags.Bool(ctx, "orders.mcp.enabled", true, nil)
+//		return on
+//	})
+//
+// enabled runs on every request, so it should answer from memory.
+func WithEnabled(enabled func(context.Context) bool) Option {
+	return func(o *options) { o.enabled = enabled }
+}
 
 // WithLogger sets the logger for tool calls. Default: slog.Default().
 func WithLogger(l *slog.Logger) Option { return func(o *options) { o.logger = l } }
@@ -145,8 +162,23 @@ func New(cfg Config, opts ...Option) (*Server, error) {
 	if o.auth != nil {
 		h = s.authenticate(h)
 	}
+	if o.enabled != nil {
+		h = s.switched(h)
+	}
 	s.handler = h
 	return s, nil
+}
+
+// switched answers 503 while the server is turned off (WithEnabled).
+func (s *Server) switched(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !s.o.enabled(r.Context()) {
+			w.Header().Set("Retry-After", "60")
+			http.Error(w, "this MCP server is turned off for now; try again later", http.StatusServiceUnavailable)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 
 // checkURL accepts absolute https URLs without a fragment, and http ones

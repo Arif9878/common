@@ -59,6 +59,13 @@
 // caller may touch the data named in the input (its tenant, its
 // organization), as every other handler does.
 //
+// # Turning it off
+//
+// [WithEnabled] is a kill switch: while it reports false, every request is
+// refused with 503, including those carrying valid tokens, which the
+// authorization server cannot recall before they expire. Pair it with the
+// authorization server's own switch, which stops new tokens.
+//
 // # Errors
 //
 // A handler's error reaches the client as a tool result with isError set
