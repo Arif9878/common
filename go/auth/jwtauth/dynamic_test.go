@@ -43,6 +43,18 @@ func TestAudiencePerCall(t *testing.T) {
 	if _, err := v.VerifyAudience(ctx, k.sign(t, "https://evil.example", jwt.MapClaims{"aud": "client-a"}), []string{"client-a"}); err == nil {
 		t.Error("wrong issuer accepted")
 	}
+
+	// AuthenticateAudience: the same check, and the claims in the context.
+	actx, err := v.AuthenticateAudience(ctx, tok, []string{"client-a"})
+	if err != nil {
+		t.Fatalf("AuthenticateAudience: %v", err)
+	}
+	if c, ok := jwtauth.FromContext(actx); !ok || c.Subject != "user-7" {
+		t.Errorf("claims in context = %+v, %v", c, ok)
+	}
+	if _, err := v.AuthenticateAudience(ctx, tok, []string{"client-b"}); errors.KindOf(err) != errors.Unauthorized {
+		t.Errorf("AuthenticateAudience with another audience: err = %v", err)
+	}
 }
 
 func TestIssuerAliases(t *testing.T) {
