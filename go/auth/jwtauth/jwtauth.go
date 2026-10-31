@@ -422,7 +422,17 @@ func publicKeyFor(m jwt.SigningMethod, pub crypto.PublicKey) (crypto.PublicKey, 
 // context's logs as user_id and to the current span as user.id, unless
 // WithoutSubjectInTelemetry is set.
 func (v *Verifier) Authenticate(ctx context.Context, token string) (context.Context, error) {
-	c, err := v.Verify(ctx, token)
+	return v.authenticate(ctx, token, v.cfg.Audience)
+}
+
+// AuthenticateAudience is Authenticate with the accepted audiences given
+// by the caller, as [Verifier.VerifyAudience] is for Verify.
+func (v *Verifier) AuthenticateAudience(ctx context.Context, token string, audiences []string) (context.Context, error) {
+	return v.authenticate(ctx, token, audiences)
+}
+
+func (v *Verifier) authenticate(ctx context.Context, token string, audiences []string) (context.Context, error) {
+	c, err := v.verify(ctx, token, audiences)
 	if err != nil {
 		return nil, err
 	}

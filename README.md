@@ -29,6 +29,7 @@ It requires **Go 1.26** or newer. Every package emits OpenTelemetry traces and m
 | | [`transport/http/httpclient`](go/transport/http/httpclient) | Pooling, safe retries, circuit breaker |
 | | [`transport/http/echoadapter`](go/transport/http/echoadapter) | The same middleware and errors for Echo (the organization's standard framework) |
 | gRPC | [`transport/grpc`](go/transport/grpc) | `grpcserver`, `grpcclient`, `grpcstatus` (error kinds ↔ status codes) |
+| MCP | [`transport/mcp/mcpserver`](go/transport/mcp/mcpserver) | Tools for AI clients over the Model Context Protocol, as an OAuth-protected resource: token audience, scopes per tool with step-up, error kinds as tool errors, telemetry (experimental) |
 | Auth | [`auth/jwtauth`](go/auth/jwtauth) | Verify OAuth/OIDC JWTs (Keycloak, Auth0, Okta, Entra ID, …) with JWKS discovery and key rotation; scopes; HTTP, Echo and gRPC |
 | | [`auth/oauth2client`](go/auth/oauth2client) | OAuth 2.0 client credentials for service-to-service calls: cached tokens refreshed before expiry, for HTTP and gRPC clients |
 | | [`tenant`](go/tenant) | The request's tenant in the context, in logs (`tenant_id`) and spans, and on to downstream HTTP, gRPC and Kafka calls as baggage; adopted from a token claim, a gateway header, or trusted baggage. jwtauth adds the token subject as `user_id` |
@@ -344,6 +345,7 @@ The core module holds the light packages. Each heavy integration is its own modu
 | `go/messaging/outbox` | Transactional outbox (PostgreSQL → Kafka) |
 | `go/secret/vault` | HashiCorp Vault API |
 | `go/transport/grpc` | gRPC (`grpcserver`, `grpcclient`, `grpcstatus`) |
+| `go/transport/mcp` | The official MCP Go SDK (`mcpserver`) |
 | `go/testkit/pgtest` | PostgreSQL test databases |
 | `go/fx` | Uber fx integration for all of the above |
 
