@@ -21,9 +21,9 @@ replace (
 )
 
 require (
-	github.com/Arif9878/common/go v0.9.0
-	github.com/Arif9878/common/go/datastore/postgres v0.9.0
-	github.com/Arif9878/common/go/testkit/pgtest v0.9.0
+	github.com/Arif9878/common/go v0.10.0
+	github.com/Arif9878/common/go/datastore/postgres v0.10.0
+	github.com/Arif9878/common/go/testkit/pgtest v0.10.0
 	github.com/jackc/pgx/v5 v5.11.0
 )
 

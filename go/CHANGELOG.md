@@ -4,6 +4,14 @@ All modules of this repository are released together with one version
 (see [RELEASING.md](RELEASING.md)). The release tool writes each section
 from the Conventional Commits merged since the previous release.
 
+## [v0.10.0](https://github.com/Arif9878/common/releases/tag/go/v0.10.0) - 2026-10-31
+
+### Features
+
+- **jwtauth:** AuthenticateAudience, Authenticate with per-call audiences ([#69](https://github.com/Arif9878/common/pull/69))
+- **mcp:** add mcpserver, MCP tools as an OAuth-protected resource ([#69](https://github.com/Arif9878/common/pull/69))
+- **mcp:** WithEnabled kill switch for mcpserver ([#69](https://github.com/Arif9878/common/pull/69))
+
 ## [v0.9.0](https://github.com/Arif9878/common/releases/tag/go/v0.9.0) - 2026-10-24
 
 ### Features

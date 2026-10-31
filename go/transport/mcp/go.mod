@@ -22,7 +22,7 @@ replace (
 )
 
 require (
-	github.com/Arif9878/common/go v0.9.0
+	github.com/Arif9878/common/go v0.10.0
 	github.com/golang-jwt/jwt/v5 v5.3.1
 	github.com/modelcontextprotocol/go-sdk v1.8.0
 	go.opentelemetry.io/otel v1.47.0
